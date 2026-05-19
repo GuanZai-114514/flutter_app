@@ -1,5 +1,15 @@
-# 這裡使用 Flutter 官方標準載入方式，不要再用手動解析 Generated.xcconfig 的代碼
-load File.expand_path(File.join('..', 'Flutter', 'podhelper.rb'), __FILE__)
+# 優先尋找 Flutter SDK 路徑
+def find_flutter_root
+  return ENV['FLUTTER_ROOT'] if ENV['FLUTTER_ROOT']
+  sdk_path = `flutter sdk-path`.strip rescue nil
+  return sdk_path unless sdk_path.empty?
+  raise "找不到 Flutter SDK，請確認環境變數。"
+end
+
+flutter_root = find_flutter_root
+
+# 載入 Flutter 輔助腳本 (直接從 SDK 載入，最保險)
+load File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
 
 platform :ios, '14.0'
 
@@ -7,7 +17,6 @@ target 'Runner' do
   use_frameworks!
   use_modular_headers!
 
-  # 這是 Flutter 3.24+ 官方指定的安裝指令
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 end
 
@@ -16,10 +25,9 @@ post_install do |installer|
     flutter_additional_ios_build_settings(target)
     
     target.build_configurations.each do |config|
-      # 確保部署目標為 14.0
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '14.0'
 
-      # 你的 Permission Handler 權限設定
+      # Permission Handler 權限設定
       config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= [
         '$(inherited)',
         'PERMISSION_LOCATION=1',
