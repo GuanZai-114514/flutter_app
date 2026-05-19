@@ -4,7 +4,6 @@ on: [push]
 jobs:
   build:
     runs-on: macos-latest
-    # 指定工作目錄，這樣下面所有指令都會在 hi 資料夾內執行
     defaults:
       run:
         working-directory: hi
@@ -17,17 +16,25 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-          cache: true
 
       - name: Create .env
         run: echo "GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}" > .env
+
+      - name: Fix Missing Flutter Files
+        # 這一步最重要：如果你的倉庫沒上傳 podhelper.rb，我們從 SDK 裡強制複製一份過去
+        run: |
+          mkdir -p ios/Flutter
+          cp "$FLUTTER_HOME/packages/flutter_tools/bin/podhelper.rb" ios/Flutter/
+          echo "FLUTTER_ROOT=$FLUTTER_HOME" > ios/Flutter/Generated.xcconfig
 
       - name: Flutter Pub Get
         run: flutter pub get
 
       - name: Build iOS
-        # 這裡會自動處理 pod install
+        # 強制指定 FLUTTER_ROOT 環境變數供 Podfile 使用
         run: flutter build ios --release --no-codesign
+        env:
+          FLUTTER_ROOT: ${{ env.FLUTTER_HOME }}
 
       - name: Package IPA
         run: |
@@ -39,5 +46,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: iOS-IPA
-          # 注意：因為工作目錄設定在 hi，產出的檔案會在 hi/App.ipa
           path: hi/App.ipa
