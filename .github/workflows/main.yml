@@ -17,6 +17,7 @@ jobs:
           echo "GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}" > .env
 
       - name: Flutter pub get
+        working-directory: app
         run: flutter pub get
 
       - name: Fix Podfile if needed
