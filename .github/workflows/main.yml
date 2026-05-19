@@ -7,28 +7,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Debug structure
+        run: |
+          echo "=== pwd ==="
+          pwd
+          echo "=== ls -la ==="
+          ls -la
+          echo "=== find pubspec ==="
+          find . -name "pubspec.yaml" -not -path "*/.*"
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
 
       - name: Create .env from secret
-        run: |
-          echo "GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}" > .env
+        run: echo "GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}" > .env
 
       - name: Flutter pub get
-        working-directory: app
         run: flutter pub get
-
-      - name: Fix Podfile if needed
-        run: |
-          PODFILE="ios/Podfile"
-          FLUTTER_LINE="require File.expand_path(File.join(ENV['FLUTTER_ROOT'], 'packages', 'flutter_tools', 'bin', 'podhelper'))"
-          # 只在不存在該行時才插入，避免重複
-          if ! grep -qF "podhelper" "$PODFILE"; then
-            sed -i.bak "1s/^/${FLUTTER_LINE}\n/" "$PODFILE"
-          fi
-        # ↑ 先執行這步，ios/Podfile 才會存在
 
       - name: Pod install
         run: |
