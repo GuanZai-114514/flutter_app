@@ -1,11 +1,34 @@
-# 將平台版本設定為 iOS 14.0
+# 1. 必須定義 flutter_root 並載入輔助腳本，否則會報 undefined method 錯誤
 platform :ios, '14.0'
 
-# Flutter 內建插件路徑
+# 這段是關鍵：讓 Podfile 知道去哪裡找 Flutter 的指令
+flutter_install_all_ios_pods_cur_path = File.dirname(File.realpath(__FILE__))
+# 嘗試從環境變數或專案路徑尋找 flutter 輔助腳本
+load File.join(flutter_install_all_ios_pods_cur_path, '..', '.flutter-plugins-dependencies') rescue nil
+
+# 核心載入語句
+def flutter_root
+  generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
+  unless File.exist?(generated_xcode_build_settings_path)
+    raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure flutter pub get has been run."
+  end
+
+  File.foreach(generated_xcode_build_settings_path) do |line|
+    matches = line.match(/\AFLUTTER_ROOT=(.*)\z/)
+    return matches[1].strip if matches
+  end
+  raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}. Try deleting Generated.xcconfig, then run flutter pub get"
+end
+
+load File.join(flutter_root, 'packages', 'flutter_tools', 'bin', 'podhelper.rb')
+
+# ---------------------------------------------------------
+
 target 'Runner' do
   use_frameworks!
   use_modular_headers!
 
+  # 現在這個指令就能被辨識了
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 end
 
@@ -14,17 +37,12 @@ post_install do |installer|
     flutter_additional_ios_build_settings(target)
     
     target.build_configurations.each do |config|
-      # 確保所有 Pods 的部署目標也都是 iOS 14.0，避免編譯警告
       config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '14.0'
 
       # 針對 permission_handler 的權限定義
       config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= [
         '$(inherited)',
-
-        ## 啟用定位權限 (你的核心需求)
         'PERMISSION_LOCATION=1',
-        
-        ## 禁用其餘不需要的權限 (避免 Apple 審核退件)
         'PERMISSION_CAMERA=1',
         'PERMISSION_PHOTOS=1',
         'PERMISSION_CONTACTS=0',
