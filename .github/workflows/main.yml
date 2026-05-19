@@ -5,35 +5,22 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Clone repository
+        uses: actions/checkout@v4
 
-      - name: Debug structure
-        run: |
-          echo "=== pwd ==="
-          pwd
-          echo "=== ls -la ==="
-          ls -la
-          echo "=== find pubspec ==="
-          find . -name "pubspec.yaml" -not -path "*/.*"
+      - name: Show repo structure
+        run: find . -name "pubspec.yaml" -not -path "*/.*" && ls -la
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
 
-      - name: Create .env from secret
+      - name: Create .env
         run: echo "GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}" > .env
 
-      - name: Flutter pub get
-        run: flutter pub get
-
-      - name: Pod install
-        run: |
-          cd ios
-          pod install --repo-update
-
-      - name: Build iOS
-        run: flutter build ios --release --no-codesign
+      - run: flutter pub get
+      - run: flutter build ios --release --no-codesign
 
       - name: Package IPA
         run: |
@@ -41,7 +28,7 @@ jobs:
           cp -r build/ios/iphoneos/Runner.app Payload/
           zip -r App.ipa Payload/
 
-      - name: Upload artifact
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: iOS-IPA
