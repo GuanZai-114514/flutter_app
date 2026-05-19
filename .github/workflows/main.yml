@@ -4,12 +4,15 @@ on: [push]
 jobs:
   build:
     runs-on: macos-latest
+    # --- 加入下面這兩行，指定工作目錄為 hi ---
+    defaults:
+      run:
+        working-directory: hi 
+    # --------------------------------------
+
     steps:
       - name: Clone repository
         uses: actions/checkout@v4
-
-      - name: Show repo structure
-        run: find . -name "pubspec.yaml" -not -path "*/.*" && ls -la
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -19,8 +22,11 @@ jobs:
       - name: Create .env
         run: echo "GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}" > .env
 
-      - run: flutter pub get
-      - run: flutter build ios --release --no-codesign
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build iOS
+        run: flutter build ios --release --no-codesign
 
       - name: Package IPA
         run: |
@@ -32,4 +38,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: iOS-IPA
-          path: App.ipa
+          # 注意：路徑要加上資料夾前綴
+          path: hi/App.ipa
