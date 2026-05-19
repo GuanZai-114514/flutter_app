@@ -1,5 +1,4 @@
 name: iOS_Build
-
 on: [push]
 
 jobs:
@@ -17,24 +16,34 @@ jobs:
         run: |
           echo "GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}" > .env
 
-      - name: Build
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: Fix Podfile if needed
         run: |
-          # 解決 Podfile 找不到 Flutter 方法的核心修復
-          sed -i '' "1i\\
-          require File.expand_path(File.join(ENV['FLUTTER_ROOT'], 'packages', 'flutter_tools', 'bin', 'podhelper'))\\
-          " ios/Podfile
+          PODFILE="ios/Podfile"
+          FLUTTER_LINE="require File.expand_path(File.join(ENV['FLUTTER_ROOT'], 'packages', 'flutter_tools', 'bin', 'podhelper'))"
+          # 只在不存在該行時才插入，避免重複
+          if ! grep -qF "podhelper" "$PODFILE"; then
+            sed -i.bak "1s/^/${FLUTTER_LINE}\n/" "$PODFILE"
+          fi
+        # ↑ 先執行這步，ios/Podfile 才會存在
 
-          rm -rf android/
-          flutter pub get
-          flutter build ios --release --no-codesign
+      - name: Pod install
+        run: |
+          cd ios
+          pod install --repo-update
 
-      - name: Package
+      - name: Build iOS
+        run: flutter build ios --release --no-codesign
+
+      - name: Package IPA
         run: |
           mkdir Payload
           cp -r build/ios/iphoneos/Runner.app Payload/
-          zip -r App.ipa Payload
+          zip -r App.ipa Payload/
 
-      - name: Upload
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: iOS-IPA
