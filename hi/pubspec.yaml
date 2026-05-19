@@ -1,0 +1,44 @@
+name: hi
+description: "A new Flutter project."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.7.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # 定位
+  geolocator: ^13.0.1
+  # HTTP
+  dio: ^5.7.0
+  # 權限
+  permission_handler: ^11.3.1
+  # SQLite
+  sqflite: ^2.4.2+1
+  path: ^1.9.0
+
+  # 圖片選取（相機 / 相簿）
+  image_picker: ^1.1.2
+  # 本地端免費 OCR（不需要 API 金鑰）
+  google_mlkit_text_recognition: ^0.13.1
+  # 條碼顯示
+  barcode_widget: ^2.0.4
+
+  shared_preferences: ^2.2.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/brand_name.db
+    - lib/brand_name.sql

@@ -1,0 +1,40 @@
+# 將平台版本設定為 iOS 14.0
+platform :ios, '14.0'
+
+# Flutter 內建插件路徑
+target 'Runner' do
+  use_frameworks!
+  use_modular_headers!
+
+  flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+end
+
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    flutter_additional_ios_build_settings(target)
+    
+    target.build_configurations.each do |config|
+      # 確保所有 Pods 的部署目標也都是 iOS 14.0，避免編譯警告
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '14.0'
+
+      # 針對 permission_handler 的權限定義
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= [
+        '$(inherited)',
+
+        ## 啟用定位權限 (你的核心需求)
+        'PERMISSION_LOCATION=1',
+        
+        ## 禁用其餘不需要的權限 (避免 Apple 審核退件)
+        'PERMISSION_CAMERA=1',
+        'PERMISSION_PHOTOS=1',
+        'PERMISSION_CONTACTS=0',
+        'PERMISSION_NOTIFICATIONS=0',
+        'PERMISSION_MICROPHONE=0',
+        'PERMISSION_SPEECH_RECOGNIZER=0',
+        'PERMISSION_BLUETOOTH=0',
+        'PERMISSION_CALENDAR=0',
+        'PERMISSION_REMINDERS=0'
+      ]
+    end
+  end
+end
