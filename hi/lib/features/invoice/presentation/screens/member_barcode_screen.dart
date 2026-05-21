@@ -25,7 +25,7 @@ class MemberBarcodeScreen extends StatefulWidget {
 // ── 條碼格式 ──────────────────────────────────────────────────────────────────
 
 enum _BarcodeType {
-  code128('Code 128B', '英數混合，最通用（7-11、全家等）'),
+  code128('Code 128', '英數混合，最通用（7-11、全家等），自動識別子集'),
   ean13('EAN-13', '純 13 位數字'),
   qrCode('QR Code', '任意字串（LINE、百貨會員等）');
 
@@ -277,13 +277,11 @@ class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
             else
               LayoutBuilder(
                 builder: (context, constraints) {
+                  // ✅ Code 128 Auto：自動選擇 A/B/C 子集
+                  // 會員條碼各品牌格式不同，交由套件自動判斷最佳編碼
                   final barcode = _selectedType == _BarcodeType.ean13
                       ? bc.Barcode.ean13()
-                      : bc.Barcode.code128(
-                          useCode128A: false,
-                          useCode128B: true,  // ✅ 強制 Code 128B
-                          useCode128C: false,
-                        );
+                      : bc.Barcode.code128();
                   final svg = barcode.toSvg(
                     data,
                     width: constraints.maxWidth - 32,
