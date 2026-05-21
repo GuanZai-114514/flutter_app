@@ -48,17 +48,21 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getString(_prefKey);
     if (!mounted) return;
+    // ✅ 讀取時再次 sanitize：trim + toUpperCase，防止舊資料汙染
+    final clean = saved?.trim().toUpperCase();
     setState(() {
-      _savedValue = saved;
-      if (saved != null) _controller.text = saved;
+      _savedValue = clean;
+      if (clean != null) _controller.text = clean;
       _isLoading = false;
     });
   }
 
   // ── 持久化：儲存 ──────────────────────────────────────────
   Future<void> _save(String value) async {
+    // ✅ 儲存前再次 sanitize，確保存入的一定是 trim + 大寫，不含任何空白
+    final clean = value.trim().toUpperCase();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_prefKey, value);
+    await prefs.setString(_prefKey, clean);
   }
 
   // ── 持久化：清除 ──────────────────────────────────────────
@@ -69,7 +73,10 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
 
   // ── 格式驗證 ──────────────────────────────────────────────
   Future<void> _validate() async {
+    // ✅ 統一在這裡做 sanitize，後續所有邏輯都用 raw 這個已清理的值
     final raw = _controller.text.trim().toUpperCase();
+    // 同步更新 controller 顯示，讓使用者看到實際被儲存的值
+    _controller.text = raw;
 
     if (raw.isEmpty) {
       setState(() {
@@ -170,9 +177,19 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
               //   3. 高度提高至 120，掃描器更容易辨識
               LayoutBuilder(
                 builder: (context, constraints) {
+                  // ✅ 三重 sanitize：trim、toUpperCase、再次確認無空白
+                  //    確保傳入 BarcodeWidget 的資料與財政部載具格式完全吻合
+                  final barcodeData = _savedValue!
+                      .trim()
+                      .toUpperCase()
+                      .replaceAll(RegExp(r'\s'), ''); // 移除任何隱藏空白字元
+                  assert(
+                    barcodeData.length == 8 && barcodeData.startsWith('/'),
+                    '❌ 條碼資料異常: "$barcodeData"',
+                  );
                   return BarcodeWidget(
                     barcode: Barcode.code128(),
-                    data: _savedValue!,
+                    data: barcodeData,
                     width: constraints.maxWidth,
                     height: 120,
                     drawText: false,
