@@ -79,9 +79,14 @@ class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
     if (!mounted) return;
     setState(() {
       if (code != null) {
-        _savedValue = code;
-        _controller.text = code;
-        if (typeStr != null) _selectedType = _BarcodeType.fromString(typeStr);
+        // ✅ 讀取時再次 sanitize，防止舊資料含有空白或小寫
+        final typeVal = typeStr != null ? _BarcodeType.fromString(typeStr) : _BarcodeType.code128;
+        final clean = typeVal == _BarcodeType.qrCode
+            ? code.trim().replaceAll(RegExp(r'\s'), '')
+            : code.trim().toUpperCase().replaceAll(RegExp(r'\s'), '');
+        _savedValue = clean;
+        _controller.text = clean;
+        _selectedType = typeVal;
       }
       _isLoading = false;
     });
@@ -89,8 +94,12 @@ class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
 
   // ── 持久化：儲存 ──────────────────────────────────────────
   Future<void> _save(String value, _BarcodeType type) async {
+    // ✅ 儲存前 sanitize：移除前後空白與隱藏字元，Code128/EAN-13 統一大寫
+    final clean = type == _BarcodeType.qrCode
+        ? value.trim().replaceAll(RegExp(r'\s'), '')
+        : value.trim().toUpperCase().replaceAll(RegExp(r'\s'), '');
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyCode, value);
+    await prefs.setString(_keyCode, clean);
     await prefs.setString(_keyType, type.name);
   }
 
@@ -339,9 +348,14 @@ class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
             else
               LayoutBuilder(
                 builder: (context, constraints) {
+                  // ✅ 三重 sanitize：trim、toUpperCase、移除任何隱藏空白字元
+                  final barcodeData = _savedValue!
+                      .trim()
+                      .toUpperCase()
+                      .replaceAll(RegExp(r'\s'), '');
                   return BarcodeWidget(
                     barcode: _barcode,
-                    data: _savedValue!,
+                    data: barcodeData,
                     width: constraints.maxWidth,
                     height: 120,
                     drawText: false,
