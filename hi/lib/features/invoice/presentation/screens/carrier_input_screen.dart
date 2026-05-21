@@ -155,8 +155,7 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
         elevation: 3,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: Padding(
-          // ✅ 修正：減少水平 padding，讓條碼有更多空間，並保留 quiet zone
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
           child: Column(
             children: [
               Text(
@@ -178,7 +177,7 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
                     height: 120,
                     drawText: false,
                     // quiet zone（靜區）：條碼左右兩端必須留白，否則掃描器容易失敗
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    padding: const EdgeInsets.symmetric(horizontal: 32),
                   );
                 },
               ),
