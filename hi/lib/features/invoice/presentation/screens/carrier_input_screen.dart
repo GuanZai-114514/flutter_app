@@ -146,15 +146,15 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
               ),
               const SizedBox(height: 16),
 
-              // ✅ 強制 Code 128B 子集，與財政部官方載具 App 編碼完全一致
+              // ✅ Code 39：財政部手機載具條碼規範
+              //   支援字元：A-Z、0-9、- . $ / + % 空格
+              //   載具格式「/ + 7碼英數.-+」全部在 Code 39 合法字元範圍內
               LayoutBuilder(
                 builder: (context, constraints) {
                   final data = _sanitize(_savedValue!);
-                  final barcode = bc.Barcode.code128(
-                    useCode128A: false,
-                    useCode128B: true,
-                    useCode128C: false,
-                  );
+                  // ✅ Code 39：財政部手機載具規範格式
+                  // 支援字元：A-Z、0-9、- . $ / + % 空格，足以涵蓋載具所有合法字元
+                  final barcode = bc.Barcode.code39();
                   final svg = barcode.toSvg(
                     data,
                     width: constraints.maxWidth - 32, // 左右各 16px quiet zone
