@@ -251,7 +251,7 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
       body: GestureDetector(
         onTap: () => _focusNode.unfocus(),
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
