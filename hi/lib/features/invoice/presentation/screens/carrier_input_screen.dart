@@ -19,8 +19,6 @@ class CarrierInputScreen extends StatefulWidget {
 
 class _CarrierInputScreenState extends State<CarrierInputScreen> {
   // ── 格式驗證正則 ──────────────────────────────────────────
-  // 財政部規範：/ 開頭 + 7碼（A-Z 0-9 . - +）
-  // 驗證前統一 toUpperCase()
   static final RegExp _carrierRegex = RegExp(r'^/[A-Z0-9.\-+]{7}$');
   static const String _prefKey = 'carrier_code';
 
@@ -28,9 +26,9 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
 
-  String? _savedValue;    // 已儲存的號碼（從 prefs 讀出）
+  String? _savedValue;
   String? _errorText;
-  bool _isLoading = true; // 讀取 prefs 中
+  bool _isLoading = true;
 
   @override
   void initState() {
@@ -74,19 +72,31 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
     final raw = _controller.text.trim().toUpperCase();
 
     if (raw.isEmpty) {
-      setState(() { _errorText = '請輸入載具號碼'; _savedValue = null; });
+      setState(() {
+        _errorText = '請輸入載具號碼';
+        _savedValue = null;
+      });
       return;
     }
     if (raw.length != 8) {
-      setState(() { _errorText = '長度不正確，需固定 8 碼（/ + 7碼）'; _savedValue = null; });
+      setState(() {
+        _errorText = '長度不正確，需固定 8 碼（/ + 7碼）';
+        _savedValue = null;
+      });
       return;
     }
     if (!raw.startsWith('/')) {
-      setState(() { _errorText = '第一碼必須為斜線「/」'; _savedValue = null; });
+      setState(() {
+        _errorText = '第一碼必須為斜線「/」';
+        _savedValue = null;
+      });
       return;
     }
     if (!_carrierRegex.hasMatch(raw)) {
-      setState(() { _errorText = '字元不合法，只允許：英文字母、數字、. - +'; _savedValue = null; });
+      setState(() {
+        _errorText = '字元不合法，只允許：英文字母、數字、. - +';
+        _savedValue = null;
+      });
       return;
     }
 
@@ -98,7 +108,10 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
       _savedValue = raw;
     });
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('✅ 載具號碼已儲存'), duration: Duration(seconds: 1)),
+      const SnackBar(
+        content: Text('✅ 載具號碼已儲存'),
+        duration: Duration(seconds: 1),
+      ),
     );
   }
 
@@ -110,7 +123,10 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
         title: const Text('刪除載具'),
         content: const Text('確定要刪除已儲存的載具號碼嗎？'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('刪除', style: TextStyle(color: Colors.red)),
@@ -122,7 +138,10 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
     await _clear();
     if (!mounted) return;
     _controller.clear();
-    setState(() { _savedValue = null; _errorText = null; });
+    setState(() {
+      _savedValue = null;
+      _errorText = null;
+    });
   }
 
   // ── 條碼區塊 ──────────────────────────────────────────────
@@ -136,7 +155,8 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
         elevation: 3,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+          // ✅ 修正：減少水平 padding，讓條碼有更多空間，並保留 quiet zone
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
           child: Column(
             children: [
               Text(
@@ -145,14 +165,22 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
               ),
               const SizedBox(height: 16),
 
-              // ⚠️ Code128：唯一支援斜線 / 的 1D 條碼格式
-              // Code39 不含斜線字元，會直接 throw，不可使用
-              BarcodeWidget(
-                barcode: Barcode.code128(),
-                data: _savedValue!,
-                width: double.infinity,
-                height: 100,
-                drawText: false, // 文字另外顯示，避免條碼字型問題
+              // ✅ 修正重點：
+              //   1. 用 LayoutBuilder 取得實際可用寬度，避免 double.infinity 渲染異常
+              //   2. padding 保留左右各 16px quiet zone（條碼規範要求靜區）
+              //   3. 高度提高至 120，掃描器更容易辨識
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  return BarcodeWidget(
+                    barcode: Barcode.code128(),
+                    data: _savedValue!,
+                    width: constraints.maxWidth,
+                    height: 120,
+                    drawText: false,
+                    // quiet zone（靜區）：條碼左右兩端必須留白，否則掃描器容易失敗
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                  );
+                },
               ),
 
               const SizedBox(height: 12),
@@ -184,7 +212,11 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
                     },
                   ),
                   IconButton(
-                    icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
+                    icon: const Icon(
+                      Icons.delete_outline,
+                      size: 18,
+                      color: Colors.red,
+                    ),
                     tooltip: '刪除載具',
                     onPressed: _deleteSaved,
                   ),
@@ -229,7 +261,9 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
                 controller: _controller,
                 focusNode: _focusNode,
                 inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'[/A-Za-z0-9.\-+]')),
+                  FilteringTextInputFormatter.allow(
+                    RegExp(r'[/A-Za-z0-9.\-+]'),
+                  ),
                   LengthLimitingTextInputFormatter(8),
                 ],
                 decoration: InputDecoration(
@@ -246,13 +280,15 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
                             _controller.clear();
                             setState(() {
                               _errorText = null;
-                              // 注意：只清輸入框，不刪已儲存的號碼
+                              // 只清輸入框，不刪已儲存的號碼
                             });
                           },
                         )
                       : null,
                 ),
-                onChanged: (_) => setState(() { _errorText = null; }),
+                onChanged: (_) => setState(() {
+                  _errorText = null;
+                }),
                 onSubmitted: (_) => _validate(),
               ),
               const SizedBox(height: 16),
