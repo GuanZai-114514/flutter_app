@@ -189,132 +189,18 @@ class _RootScreenState extends State<RootScreen> {
 
 // ── 首頁 Tab ──────────────────────────────────────────────────────────────────
 //
-// 佈局（照設計稿）：
-//   上排：全家（左）、7-ELEVEN（右）
-//   中央：詳細資訊卡片（回饋、條件、行動支付）
-//   下排：萊爾富（左）、OK超商（右）
-//   底部：「會員 or 載具」pill（開啟條碼/載具選擇）
-//
 // 狀態：
-//   _activeStoreId  → 目前高亮的超商圓圈 ID
-//   _selectedStore  → 從附近店家清單選中的那家（定位後帶入）
+//   _selectedStore  → 從附近店家清單選中的那家（session 層級，APP 殺掉即清除）
+//   _activeCard     → 目前三個按鈕中選中哪個（member / payment / carrier）
 //   _displayList    → 附近店家清單（定位後取得）
 //   _isLoading      → 定位 / API 載入中
+//
+// 邏輯：
+//   - 點「迴轉」圖示 → 重新定位並更新清單，同時清除 _selectedStore
+//   - 點清單任一行  → 底部 Sheet 選店，選完後 _selectedStore 更新
+//   - 三個按鈕切換  → 顯示對應的條碼區（從 CarrierInputScreen / MemberBarcodeScreen 邏輯借用）
 
 enum _ActiveCard { member, payment, carrier }
-
-// 超商靜態資料
-class _StoreInfo {
-  final String id;
-  final String name;
-  final String shortName;
-  final Color primaryColor;
-  final Color bgColor;
-  final String cashback;
-  final List<_Condition> conditions;
-  final List<_PayMethod> payMethods;
-  final bool hasBadge;
-
-  const _StoreInfo({
-    required this.id,
-    required this.name,
-    required this.shortName,
-    required this.primaryColor,
-    required this.bgColor,
-    required this.cashback,
-    required this.conditions,
-    required this.payMethods,
-    this.hasBadge = false,
-  });
-}
-
-class _Condition {
-  final String text;
-  final bool isRed;
-  const _Condition(this.text, {this.isRed = false});
-}
-
-class _PayMethod {
-  final String label;
-  final Color color;
-  const _PayMethod(this.label, this.color);
-}
-
-const _kStores = <String, _StoreInfo>{
-  'fm': _StoreInfo(
-    id: 'fm',
-    name: '全家便利商店',
-    shortName: '全家',
-    primaryColor: Color(0xFF003087),
-    bgColor: Color(0xFFE8F0FF),
-    cashback: '5%',
-    hasBadge: true,
-    conditions: [
-      _Condition('消費滿 100 元享 5% 回饋', isRed: true),
-      _Condition('滿 200 減 20'),
-      _Condition('需使用 FamiPay 付款', isRed: true),
-    ],
-    payMethods: [
-      _PayMethod('LINE Pay', Color(0xFF00B900)),
-      _PayMethod('街口支付', Color(0xFFE53935)),
-      _PayMethod('Apple Pay', Color(0xFF1C1C1E)),
-      _PayMethod('Google Pay', Color(0xFF4285F4)),
-    ],
-  ),
-  'seven': _StoreInfo(
-    id: 'seven',
-    name: '7-ELEVEN',
-    shortName: '7-11',
-    primaryColor: Color(0xFFEF6C00),
-    bgColor: Color(0xFFFFF3E0),
-    cashback: '3%',
-    conditions: [
-      _Condition('Open 錢包付款享 3%', isRed: true),
-      _Condition('滿 150 減 15'),
-      _Condition('每月上限 100 點', isRed: true),
-    ],
-    payMethods: [
-      _PayMethod('Apple Pay', Color(0xFF1C1C1E)),
-      _PayMethod('街口支付', Color(0xFFE53935)),
-    ],
-  ),
-  'hilife': _StoreInfo(
-    id: 'hilife',
-    name: '萊爾富',
-    shortName: 'Hi-Life',
-    primaryColor: Color(0xFFE53935),
-    bgColor: Color(0xFFFFEBEE),
-    cashback: '2%',
-    conditions: [
-      _Condition('Hi-Life Pay 付款', isRed: true),
-      _Condition('滿 50 減 5'),
-      _Condition('週末加碼 +1%', isRed: true),
-    ],
-    payMethods: [
-      _PayMethod('Google Pay', Color(0xFF4285F4)),
-      _PayMethod('Apple Pay', Color(0xFF1C1C1E)),
-    ],
-  ),
-  'ok': _StoreInfo(
-    id: 'ok',
-    name: 'OK超商',
-    shortName: 'OK',
-    primaryColor: Color(0xFFE53935),
-    bgColor: Color(0xFFFFEBEE),
-    cashback: '4%',
-    hasBadge: true,
-    conditions: [
-      _Condition('OK Pay 付款享 4%', isRed: true),
-      _Condition('滿 150 減 10'),
-      _Condition('每筆最高回饋 20 點', isRed: true),
-    ],
-    payMethods: [
-      _PayMethod('Apple Pay', Color(0xFF1C1C1E)),
-      _PayMethod('Google Pay', Color(0xFF4285F4)),
-      _PayMethod('Samsung Pay', Color(0xFF1428A0)),
-    ],
-  ),
-};
 
 class HomeTab extends StatefulWidget {
   final List<String> dbKeywords;
@@ -334,13 +220,10 @@ class _HomeTabState extends State<HomeTab> {
   bool _isLoading = false;
   String _permissionMessage = '';
 
-  // 定位後帶入的選中店家（用來對應圓圈）
+  // 當前選中店家（session 層級）
   Map<String, String>? _selectedStore;
 
-  // 目前高亮的超商圓圈 ID（預設全家）
-  String _activeStoreId = 'fm';
-
-  // 會員 or 載具 三按鈕
+  // 三按鈕狀態
   _ActiveCard _activeCard = _ActiveCard.member;
 
   @override
@@ -437,14 +320,6 @@ class _HomeTabState extends State<HomeTab> {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('偵測不到支援的便利商店')),
           );
-        } else {
-          // 自動選取最近的那家，並高亮對應圓圈
-          final nearest = matches.first;
-          final nearestId = _matchStoreId(nearest['name']!);
-          setState(() {
-            _selectedStore = nearest;
-            if (nearestId != null) _activeStoreId = nearestId;
-          });
         }
       }
     } catch (e) {
@@ -459,31 +334,6 @@ class _HomeTabState extends State<HomeTab> {
   }
 
   Future<List<String>> _fetchPlaces(double lat, double lng) async {
-    if (_displayList.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('請先點右上角 ↻ 偵測附近店家')),
-      );
-      return;
-    }
-
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (ctx) => _StorePickerSheet(
-        stores: _displayList,
-        selectedStore: _selectedStore,
-        onSelected: (store) {
-          final id = _matchStoreId(store['name']!);
-          setState(() {
-            _selectedStore = store;
-            if (id != null) _activeStoreId = id;
-          });
-          Navigator.of(ctx).pop();
-        },
-      ),
-    );
-  }
     try {
       final res = await Dio()
           .post(
@@ -529,6 +379,7 @@ class _HomeTabState extends State<HomeTab> {
   /// 顯示附近店家清單 Sheet，選完後更新 _selectedStore
   Future<void> _showStorePickerSheet() async {
     if (_displayList.isEmpty) {
+      // 還沒定位過，先提示
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('請先點右上角 ↻ 偵測附近店家')),
       );
@@ -543,25 +394,45 @@ class _HomeTabState extends State<HomeTab> {
         stores: _displayList,
         selectedStore: _selectedStore,
         onSelected: (store) {
-          final id = _matchStoreId(store['name']!);
-          setState(() {
-            _selectedStore = store;
-            if (id != null) _activeStoreId = id;
-          });
+          setState(() => _selectedStore = store);
           Navigator.of(ctx).pop();
         },
       ),
     );
   }
 
-  // ── 根據店名對應圓圈 ID ─────────────────────────────────────────────────
-  String? _matchStoreId(String name) {
-    final n = name.replaceAll(' ', '').toLowerCase();
-    if (n.contains('全家') || n.contains('familymart')) return 'fm';
-    if (n.contains('7-eleven') || n.contains('7eleven') || n.contains('711')) return 'seven';
-    if (n.contains('萊爾富') || n.contains('hilife')) return 'hilife';
-    if (n.contains('ok') || n.contains('ok超商')) return 'ok';
-    return null;
+  // ── 進入條碼 / 載具畫面 ───────────────────────────────────────────────────
+
+  void _navigateToActiveScreen() {
+    switch (_activeCard) {
+      case _ActiveCard.member:
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => MemberBarcodeScreen(
+              brandName: _selectedStore?['name'],
+            ),
+            fullscreenDialog: true,
+          ),
+        );
+      case _ActiveCard.payment:
+        // 行動支付目前導向載具畫面（未來可換成行動支付選單）
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const CarrierInputScreen(),
+            fullscreenDialog: true,
+          ),
+        );
+      case _ActiveCard.carrier:
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const CarrierInputScreen(),
+            fullscreenDialog: true,
+          ),
+        );
+    }
   }
 
   // ── UI ────────────────────────────────────────────────────────────────────
@@ -576,11 +447,13 @@ class _HomeTabState extends State<HomeTab> {
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
         actions: [
+          // 定位授權
           IconButton(
             onPressed: _requestPermission,
             icon: const Icon(Icons.location_on_outlined),
             tooltip: '定位權限',
           ),
+          // 重新定位（迴轉圖示）
           IconButton(
             onPressed: _isLoading ? null : _startDetection,
             icon: _isLoading
@@ -621,600 +494,350 @@ class _HomeTabState extends State<HomeTab> {
           Expanded(
             child: !widget.dbReady
                 ? const Center(child: CircularProgressIndicator.adaptive())
-                : _buildMainLayout(context),
-          ),
-        ],
-      ),
-    );
-  }
+                : SingleChildScrollView(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // ── 主卡片：店家名 + 三按鈕 + 條碼區 ──────────────
+                        _buildMainCard(context),
+                        const SizedBox(height: 16),
 
-  // ── 主佈局：四角圓圈 + 中央卡片 + 底部 pill ──────────────────────────────
-
-  Widget _buildMainLayout(BuildContext context) {
-    final store = _kStores[_activeStoreId]!;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-      child: Column(
-        children: [
-          // 上排：全家（左）、7-ELEVEN（右）
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _buildStoreCircle('fm'),
-              _buildStoreCircle('seven'),
-            ],
-          ),
-
-          const SizedBox(height: 10),
-
-          // 中央：詳細資訊卡片（彈性填滿剩餘空間）
-          Expanded(child: _buildInfoCard(store)),
-
-          const SizedBox(height: 10),
-
-          // 下排：萊爾富（左）、OK（右）
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _buildStoreCircle('hilife'),
-              _buildStoreCircle('ok'),
-            ],
-          ),
-
-          const SizedBox(height: 12),
-
-          // 「會員 or 載具」pill + 三點
-          _buildMemberPill(context),
-        ],
-      ),
-    );
-  }
-
-  // ── 超商圓圈按鈕 ─────────────────────────────────────────────────────────
-
-  Widget _buildStoreCircle(String id) {
-    final info = _kStores[id]!;
-    final isActive = _activeStoreId == id;
-
-    return GestureDetector(
-      onTap: () => setState(() => _activeStoreId = id),
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            width: 72,
-            height: 72,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: isActive ? info.primaryColor : const Color(0xFFE0E0E0),
-                width: isActive ? 2.5 : 1.5,
-              ),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _buildStoreLogo(id, info),
-                const SizedBox(height: 3),
-                Text(
-                  info.shortName,
-                  style: TextStyle(
-                    fontSize: 9,
-                    fontWeight: FontWeight.w700,
-                    color: isActive ? info.primaryColor : Colors.grey[600],
+                        // ── 附近店家清單（取代原本的「店家優惠資訊」） ────
+                        _buildNearbySection(),
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ),
           ),
-          // 紅色 badge（有特殊回饋）
-          if (info.hasBadge)
-            Positioned(
-              top: 2,
-              right: 2,
-              child: Container(
-                width: 14,
-                height: 14,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE53935),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white, width: 1.5),
-                ),
-              ),
-            ),
         ],
       ),
     );
   }
 
-  // ── 超商 LOGO（各自色塊模擬） ─────────────────────────────────────────────
+  // ── 主卡片 ────────────────────────────────────────────────────────────────
 
-  Widget _buildStoreLogo(String id, _StoreInfo info) {
-    switch (id) {
-      case 'fm':
-        return Column(
-          children: [
-            Container(
-              width: 40,
-              height: 13,
-              decoration: const BoxDecoration(
-                color: Color(0xFF00B8A9),
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(3),
-                  topRight: Radius.circular(3),
-                ),
-              ),
-              child: const Center(
-                child: Text('Family',
-                    style: TextStyle(
-                        fontSize: 6, fontWeight: FontWeight.w900, color: Colors.white)),
-              ),
-            ),
-            Container(
-              width: 40,
-              height: 17,
-              decoration: const BoxDecoration(
-                color: Color(0xFF003087),
-                borderRadius: BorderRadius.only(
-                  bottomLeft: Radius.circular(3),
-                  bottomRight: Radius.circular(3),
-                ),
-              ),
-              child: const Center(
-                child: Text('FamilyMart',
-                    style: TextStyle(
-                        fontSize: 5, fontWeight: FontWeight.w800, color: Colors.white)),
-              ),
-            ),
-          ],
-        );
-
-      case 'seven':
-        return SizedBox(
-          width: 36,
-          height: 36,
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: Column(children: [
-                    Expanded(child: Container(color: const Color(0xFF2E7D32))),
-                    Expanded(child: Container(color: const Color(0xFFEF6C00))),
-                    Expanded(child: Container(color: const Color(0xFFC62828))),
-                  ]),
-                ),
-              ),
-              const Center(
-                child: Text('7',
-                    style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w900,
-                        color: Colors.white,
-                        height: 1)),
-              ),
-            ],
-          ),
-        );
-
-      case 'hilife':
-        return Container(
-          width: 36,
-          height: 36,
-          decoration: const BoxDecoration(
-            color: Color(0xFFE53935),
-            shape: BoxShape.circle,
-          ),
-          child: const Center(
-            child: Text('Hi',
-                style: TextStyle(
-                    fontSize: 11, fontWeight: FontWeight.w900, color: Colors.white)),
-          ),
-        );
-
-      case 'ok':
-        return Container(
-          width: 40,
-          height: 26,
-          decoration: BoxDecoration(
-            color: const Color(0xFFE53935),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: const Center(
-            child: Text('OK',
-                style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.white,
-                    letterSpacing: -0.5)),
-          ),
-        );
-
-      default:
-        return Icon(Icons.store, color: info.primaryColor, size: 28);
-    }
-  }
-
-  // ── 中央詳細資訊卡片 ──────────────────────────────────────────────────────
-
-  Widget _buildInfoCard(_StoreInfo store) {
-    // 定位後取得的門市全名（若有）
-    final branchName = _selectedStore != null &&
-            _selectedStore!['name']!
-                .toLowerCase()
-                .contains(store.id == 'fm' ? '全家' : store.shortName)
-        ? _selectedStore!['fullName']!
-        : null;
+  Widget _buildMainCard(BuildContext context) {
+    final hasStore = _selectedStore != null;
+    final storeName = hasStore ? _selectedStore!['name']! : '尚未選擇店家';
+    final storeFullName = hasStore ? _selectedStore!['fullName']! : '';
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFE8E8E8)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── 上半：LOGO + 店名 + 回饋 + 條件 ───────────────────────────
+          // 店家名稱列
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 左欄：LOGO + LINE Pay + 街口
-              Column(
-                children: [
-                  _buildStoreLogo(store.id, store),
-                  const SizedBox(height: 8),
-                  _buildPayTag('LINE Pay', const Color(0xFF00B900)),
-                  const SizedBox(height: 4),
-                  _buildPayTag('街口支付', const Color(0xFFE53935)),
-                ],
-              ),
-
-              const SizedBox(width: 12),
-
-              // 右欄：店名、回饋%、條件清單
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // 店名列（店名 + badge 紅點）
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                store.name,
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
-                                  color: Color(0xFF111111),
-                                ),
-                              ),
-                              if (branchName != null)
-                                Text(
-                                  branchName,
-                                  style: const TextStyle(
-                                      fontSize: 10, color: Colors.grey),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                            ],
-                          ),
-                        ),
-                        if (store.hasBadge)
-                          Container(
-                            width: 8,
-                            height: 8,
-                            margin: const EdgeInsets.only(left: 4, top: 2),
-                            decoration: const BoxDecoration(
-                              color: Color(0xFFE53935),
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 4),
-
-                    // 回饋 XX%
-                    Text(
-                      '回饋 ${store.cashback}',
-                      style: const TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w900,
-                        color: Color(0xFF1A73E8),
-                      ),
-                    ),
-
-                    const SizedBox(height: 6),
-
-                    // 條件清單
-                    ...store.conditions.map((c) => Padding(
-                          padding: const EdgeInsets.only(bottom: 3),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Padding(
-                                padding: const EdgeInsets.only(top: 4),
-                                child: Container(
-                                  width: 6,
-                                  height: 6,
-                                  decoration: BoxDecoration(
-                                    color: c.isRed
-                                        ? const Color(0xFFE53935)
-                                        : const Color(0xFF444444),
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 5),
-                              Expanded(
-                                child: Text(
-                                  c.text,
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: c.isRed
-                                        ? FontWeight.w600
-                                        : FontWeight.w400,
-                                    color: c.isRed
-                                        ? const Color(0xFFE53935)
-                                        : const Color(0xFF333333),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        )),
-                  ],
-                ),
-              ),
-            ],
-          ),
-
-          const Divider(height: 16, thickness: 1, color: Color(0xFFF0F0F0)),
-
-          // ── 下半：行動支付 chip 列 ────────────────────────────────────
-          Wrap(
-            spacing: 6,
-            runSpacing: 5,
-            children: store.payMethods
-                .map((p) => _buildPayChip(p))
-                .toList(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPayTag(String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(5),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-            fontSize: 8.5, fontWeight: FontWeight.w700, color: Colors.white),
-      ),
-    );
-  }
-
-  Widget _buildPayChip(_PayMethod p) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        border: Border.all(color: const Color(0xFFE0E0E0)),
-        borderRadius: BorderRadius.circular(8),
-        color: Colors.white,
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 14,
-            height: 14,
-            decoration: BoxDecoration(
-              color: p.color,
-              borderRadius: BorderRadius.circular(3),
-            ),
-            child: Center(
-              child: Text(
-                p.label[0],
-                style: const TextStyle(
-                    fontSize: 7,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.white),
-              ),
-            ),
-          ),
-          const SizedBox(width: 4),
-          Text(
-            p.label,
-            style: const TextStyle(fontSize: 9.5, color: Color(0xFF555555)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── 會員 or 載具 Pill ─────────────────────────────────────────────────────
-
-  Widget _buildMemberPill(BuildContext context) {
-    return GestureDetector(
-      onTap: () => _showMemberOrCarrierSheet(context),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(30),
-          border: Border.all(color: const Color(0xFFE0E0E0)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              '未完善',
-              style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFFE53935)),
-            ),
-            const SizedBox(width: 10),
-            const Text(
-              '會員 or 載具',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(width: 10),
-            // 三個切換點
-            Row(
-              children: List.generate(
-                3,
-                (i) => Container(
-                  width: 7,
-                  height: 7,
-                  margin: const EdgeInsets.symmetric(horizontal: 2),
-                  decoration: BoxDecoration(
-                    color: i == 0 ? const Color(0xFF333333) : const Color(0xFFCCCCCC),
-                    shape: BoxShape.circle,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ── 會員 or 載具 底部 Sheet ───────────────────────────────────────────────
-
-  void _showMemberOrCarrierSheet(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (ctx) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        padding: EdgeInsets.fromLTRB(
-          20, 12, 20, MediaQuery.of(ctx).padding.bottom + 24,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 16),
-                decoration: BoxDecoration(
-                  color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const Text('選擇顯示類型',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 16),
-            _buildSheetItem(
-              ctx,
-              icon: Icons.person_outline,
-              color: Colors.blue,
-              title: '店家會員條碼',
-              subtitle: '顯示該店家的會員條碼',
-              onTap: () {
-                Navigator.pop(ctx);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => MemberBarcodeScreen(
-                      brandName: _kStores[_activeStoreId]!.name,
-                    ),
-                    fullscreenDialog: true,
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: 8),
-            _buildSheetItem(
-              ctx,
-              icon: Icons.receipt_long_outlined,
-              color: Colors.indigo,
-              title: '電子載具',
-              subtitle: '顯示手機條碼載具',
-              onTap: () {
-                Navigator.pop(ctx);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const CarrierInputScreen(),
-                    fullscreenDialog: true,
-                  ),
-                );
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSheetItem(
-    BuildContext ctx, {
-    required IconData icon,
-    required Color color,
-    required String title,
-    required String subtitle,
-    required VoidCallback onTap,
-  }) {
-    return Material(
-      color: color.withOpacity(0.06),
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          child: Row(
             children: [
               Container(
-                width: 42,
-                height: 42,
+                width: 44,
+                height: 44,
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.12),
+                  color: hasStore ? Colors.blue.shade50 : Colors.grey.shade100,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Icon(icon, color: color, size: 22),
+                child: Icon(
+                  Icons.store,
+                  color: hasStore ? Colors.blue : Colors.grey,
+                ),
               ),
-              const SizedBox(width: 14),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w600, fontSize: 15)),
-                    Text(subtitle,
-                        style:
-                            const TextStyle(fontSize: 12, color: Colors.grey)),
+                    Text(
+                      storeName,
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 17,
+                        color: hasStore ? null : Colors.grey,
+                      ),
+                    ),
+                    if (storeFullName.isNotEmpty)
+                      Text(
+                        storeFullName,
+                        style: const TextStyle(fontSize: 11, color: Colors.grey),
+                      ),
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right, color: Colors.grey),
+              // 切換店家按鈕
+              TextButton.icon(
+                onPressed: _showStorePickerSheet,
+                icon: const Icon(Icons.swap_horiz, size: 16),
+                label: const Text('切換'),
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.blue,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 16),
+
+          // 三按鈕列
+          Row(
+            children: [
+              _buildToggleBtn(
+                label: '店家會員',
+                icon: Icons.person_outline,
+                active: _activeCard == _ActiveCard.member,
+                onTap: () => setState(() => _activeCard = _ActiveCard.member),
+              ),
+              const SizedBox(width: 8),
+              _buildToggleBtn(
+                label: '行動支付',
+                icon: Icons.payment_outlined,
+                active: _activeCard == _ActiveCard.payment,
+                onTap: () => setState(() => _activeCard = _ActiveCard.payment),
+              ),
+              const SizedBox(width: 8),
+              _buildToggleBtn(
+                label: '載具',
+                icon: Icons.receipt_long_outlined,
+                active: _activeCard == _ActiveCard.carrier,
+                onTap: () => setState(() => _activeCard = _ActiveCard.carrier),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 16),
+
+          // 條碼區（根據 _activeCard 顯示對應說明 + 入口按鈕）
+          _buildBarcodeArea(hasStore),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildToggleBtn({
+    required String label,
+    required IconData icon,
+    required bool active,
+    required VoidCallback onTap,
+  }) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: active ? Colors.blue : Colors.grey.shade100,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            children: [
+              Icon(icon,
+                  size: 20, color: active ? Colors.white : Colors.grey.shade600),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: active ? Colors.white : Colors.grey.shade600,
+                ),
+              ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildBarcodeArea(bool hasStore) {
+    // 未選店家時顯示提示
+    if (!hasStore) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 28),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: Column(
+          children: [
+            Icon(Icons.touch_app_outlined, size: 36, color: Colors.grey.shade400),
+            const SizedBox(height: 8),
+            Text(
+              '請先點右上角 ↻ 定位\n再從下方選擇店家',
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      );
+    }
+
+    // 各按鈕對應的說明文字
+    final String title;
+    final String subtitle;
+    final IconData icon;
+
+    switch (_activeCard) {
+      case _ActiveCard.member:
+        // 7-11 限定提示
+        final is711 = _selectedStore!['name']!.contains('7-ELEVEN') ||
+            _selectedStore!['name']!.contains('7-11');
+        title = is711 ? '7-ELEVEN 會員條碼' : '${_selectedStore!['name']!} 會員條碼';
+        subtitle = '點擊展示條碼給店員掃描';
+        icon = Icons.person_outline;
+      case _ActiveCard.payment:
+        title = '行動支付';
+        subtitle = '點擊選擇支付方式';
+        icon = Icons.payment_outlined;
+      case _ActiveCard.carrier:
+        title = '電子載具';
+        subtitle = '點擊展示載具條碼';
+        icon = Icons.receipt_long_outlined;
+    }
+
+    return GestureDetector(
+      onTap: _navigateToActiveScreen,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+        decoration: BoxDecoration(
+          color: Colors.blue.shade50,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.blue.shade100),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: Colors.blue.shade100,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: Colors.blue.shade700),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                      color: Colors.blue.shade800,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: TextStyle(fontSize: 12, color: Colors.blue.shade600),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, color: Colors.blue.shade400),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── 附近店家 Section ──────────────────────────────────────────────────────
+
+  Widget _buildNearbySection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 10),
+          child: Text(
+            '附近店家',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey[500],
+              letterSpacing: 0.5,
+            ),
+          ),
+        ),
+        if (_isLoading)
+          const Center(child: CircularProgressIndicator.adaptive())
+        else if (_displayList.isEmpty)
+          _buildEmptyStoreHint()
+        else
+          ..._displayList.map((m) => _buildStoreRow(m)),
+      ],
+    );
+  }
+
+  Widget _buildEmptyStoreHint() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 28),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        children: [
+          Icon(Icons.store_mall_directory_outlined,
+              size: 48, color: Colors.grey[300]),
+          const SizedBox(height: 10),
+          Text(
+            '點右上角 ↻ 偵測附近店家',
+            style: TextStyle(color: Colors.grey[400], fontSize: 14),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStoreRow(Map<String, String> m) {
+    final isSelected = _selectedStore?['fullName'] == m['fullName'];
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: isSelected
+            ? Border.all(color: Colors.blue, width: 1.5)
+            : null,
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        leading: Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: isSelected ? Colors.blue.shade50 : Colors.blue.shade50,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(Icons.store,
+              color: isSelected ? Colors.blue : Colors.blue.shade300),
+        ),
+        title: Text(m['name']!,
+            style: const TextStyle(fontWeight: FontWeight.w600)),
+        subtitle: Text(m['fullName']!,
+            style: const TextStyle(fontSize: 11, color: Colors.grey)),
+        trailing: isSelected
+            ? const Icon(Icons.check_circle, color: Colors.blue)
+            : const Icon(Icons.chevron_right, color: Colors.grey),
+        onTap: () => setState(() => _selectedStore = m),
       ),
     );
   }
