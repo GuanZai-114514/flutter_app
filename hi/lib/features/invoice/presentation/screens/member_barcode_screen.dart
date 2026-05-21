@@ -303,7 +303,7 @@ class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
         // ✅ 修正：減少水平 padding，讓條碼有更多空間
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
         child: Column(
           children: [
             // 品牌名稱標題
@@ -346,7 +346,7 @@ class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
                     height: 120,
                     drawText: false,
                     // quiet zone：1D 條碼左右兩端必須留白
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    padding: const EdgeInsets.symmetric(horizontal: 32),
                   );
                 },
               ),
