@@ -27,21 +27,23 @@ jobs:
       - name: Flutter Pub Get
         run: flutter pub get
 
-      # --- 關鍵修正步驟：強制確保資產檔案存在 ---
-      - name: Ensure Assets Exist
+      # --- 核心自動化修正：自動建立所有缺失的 assets 檔案 ---
+      - name: Auto-fix All Missing Assets
         run: |
-          echo "正在檢查並強制建立缺失的資產檔案..."
-          mkdir -p assets
-          # 如果檔案不存在，建立一個空的 sql 檔案，避免編譯失敗
-          if [ ! -f "assets/brand_name.sql" ]; then
-            echo "警告：找不到 assets/brand_name.sql，正在建立空檔案以繞過編譯錯誤。"
-            touch assets/brand_name.sql
-          fi
-          # 同理處理之前噴錯的另一個檔案
-          mkdir -p lib/Payment
-          if [ ! -f "lib/Payment/stores.sql" ]; then
-            touch lib/Payment/stores.sql
-          fi
+          echo "正在自動檢查 pubspec.yaml 中定義的所有資產..."
+          # 透過 python 或簡單的 grep 抓取 pubspec.yaml 中的資產路徑
+          # 排除資料夾宣告，只針對具體的檔案路徑
+          ASSETS=$(grep -E '^\s+-\s+\S+\.' pubspec.yaml | sed 's/.*-\s*//' | sed 's/[[:space:]]*$//')
+          
+          for ASSET in $ASSETS; do
+            if [ ! -f "$ASSET" ]; then
+              echo "找不到資產: $ASSET ，正在自動建立..."
+              mkdir -p "$(dirname "$ASSET")"
+              touch "$ASSET"
+            else
+              echo "資產已存在: $ASSET"
+            fi
+          done
 
       - name: Configure Xcode Build Settings
         run: |
