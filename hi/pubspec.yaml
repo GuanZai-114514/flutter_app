@@ -11,6 +11,8 @@ dependencies:
   flutter:
     sdk: flutter
 
+  url_launcher : ^6.2.5
+
   barcode: ^2.2.5
   flutter_svg: ^2.0.10
 
