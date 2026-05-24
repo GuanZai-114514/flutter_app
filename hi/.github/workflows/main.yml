@@ -1,41 +1,60 @@
 name: iOS_Build
-
 on: [push]
 
 jobs:
   build:
     runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: hi
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Clone repository
+        uses: actions/checkout@v4
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+          cache: true
 
-      - name: Create .env from secret
+      # 1. 停用 SPM 以解決 plugin 不支援的問題
+      - name: Disable Swift Package Manager
+        run: flutter config --no-enable-swift-package-manager
+
+      - name: Create .env
+        run: echo "GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}" > .env
+
+      - name: Flutter Pub Get
+        run: flutter pub get
+
+      # 2. 偵錯步驟：列出檔案，確保 stores.sql 真的存在
+      - name: List files for debugging
         run: |
-          echo "GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}" > .env
+          echo "Checking if SQL file exists..."
+          ls -R lib/Payment/ || echo "Directory lib/Payment/ not found!"
 
-      - name: Build
+      # 3. 注入虛擬 Team ID 並強制關閉簽署 (解決 Xcode 報錯)
+      - name: Configure Xcode Build Settings
         run: |
-          # 解決 Podfile 找不到 Flutter 方法的核心修復
-          sed -i '' "1i\\
-          require File.expand_path(File.join(ENV['FLUTTER_ROOT'], 'packages', 'flutter_tools', 'bin', 'podhelper'))\\
-          " ios/Podfile
+          mkdir -p ios/Flutter
+          echo "DEVELOPMENT_TEAM=5B97512345" >> ios/Flutter/Release.xcconfig
+          echo "CODE_SIGNING_ALLOWED=NO" >> ios/Flutter/Release.xcconfig
+          echo "CODE_SIGNING_REQUIRED=NO" >> ios/Flutter/Release.xcconfig
+          echo "CODE_SIGN_IDENTITY=" >> ios/Flutter/Release.xcconfig
 
-          rm -rf android/
-          flutter pub get
-          flutter build ios --release --no-codesign
+      - name: Build iOS
+        # 使用 --no-codesign
+        run: flutter build ios --release --no-codesign
 
-      - name: Package
+      - name: Package IPA
         run: |
           mkdir Payload
           cp -r build/ios/iphoneos/Runner.app Payload/
-          zip -r App.ipa Payload
+          zip -r App.ipa Payload/
 
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: iOS-IPA
-          path: App.ipa
+          path: hi/App.ipa
