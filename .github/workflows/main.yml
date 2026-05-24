@@ -4,7 +4,6 @@ on: [push]
 jobs:
   build:
     runs-on: macos-latest
-    # 指定工作目錄，這樣下面所有指令都會在 hi 資料夾內執行
     defaults:
       run:
         working-directory: hi
@@ -19,19 +18,33 @@ jobs:
           channel: 'stable'
           cache: true
 
+      # 解決問題 1: 停用 SPM 整合，改回使用 CocoaPods (解決套件不支援 SPM 的警告)
+      - name: Disable Swift Package Manager
+        run: flutter config --no-enable-swift-package-manager
+
       - name: Create .env
         run: echo "GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}" > .env
 
       - name: Flutter Pub Get
         run: flutter pub get
 
+      # 解決問題 2: 注入虛擬 Team ID 並強制關閉簽署 (解決 Xcode 報錯)
+      # 我們直接修改 Release.xcconfig 檔案，這是最穩定的做法
+      - name: Configure Xcode Build Settings
+        run: |
+          echo "DEVELOPMENT_TEAM=5B97512345" >> ios/Flutter/Release.xcconfig
+          echo "CODE_SIGNING_ALLOWED=NO" >> ios/Flutter/Release.xcconfig
+          echo "CODE_SIGNING_REQUIRED=NO" >> ios/Flutter/Release.xcconfig
+          echo "CODE_SIGN_IDENTITY=" >> ios/Flutter/Release.xcconfig
+
       - name: Build iOS
-        # 這裡會自動處理 pod install
+        # 使用 --no-codesign 配合上面注入的設定
         run: flutter build ios --release --no-codesign
 
       - name: Package IPA
         run: |
           mkdir Payload
+          # 確保路徑正確，Flutter build 產出的路徑通常如下
           cp -r build/ios/iphoneos/Runner.app Payload/
           zip -r App.ipa Payload/
 
@@ -39,5 +52,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: iOS-IPA
-          # 注意：因為工作目錄設定在 hi，產出的檔案會在 hi/App.ipa
           path: hi/App.ipa
