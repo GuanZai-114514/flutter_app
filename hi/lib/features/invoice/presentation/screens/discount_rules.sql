@@ -1,0 +1,4 @@
+﻿CREATE TABLE discount_rules(id DOUBLE,payment_software VARCHAR(10),payment_method VARCHAR(10),user_level VARCHAR(10),discount_amount DOUBLE,min_spend DOUBLE,equivalent_rate DOUBLE,is_special DOUBLE,start_date VARCHAR(10),end_date VARCHAR(10),available_days DOUBLE,rule_desc VARCHAR(10));
+INSERT INTO discount_rules (id,payment_software,payment_method,user_level,discount_amount,min_spend,equivalent_rate,is_special,start_date,end_date,available_days,rule_desc) VALUES 
+(2001,'悠遊付','錢包支付','一般',10,100,0.1,1,'2026/5/1','2026/6/30',67,'週末滿百折十'),
+(2101,'街口支付','帳戶付款','一般',50,500,0.1,1,'2026/5/1','2026/5/31',135,'一三五滿$500折$50');
