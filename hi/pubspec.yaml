@@ -11,6 +11,9 @@ dependencies:
   flutter:
     sdk: flutter
 
+  barcode: ^2.2.5
+  flutter_svg: ^2.0.10
+
   cupertino_icons: ^1.0.8
 
   # 定位
@@ -27,10 +30,8 @@ dependencies:
   image_picker: ^1.1.2
   # 本地端免費 OCR（不需要 API 金鑰）
   google_mlkit_text_recognition: ^0.13.1
-  # 條碼邏輯（支援 Code 39 / Code 128 Auto / EAN-13 / QR Code 等）
-  barcode: ^2.2.5
-  # SVG 顯示（搭配 barcode 套件輸出）
-  flutter_svg: ^2.0.10
+  # 條碼顯示
+  barcode_widget: ^2.0.4
 
   shared_preferences: ^2.2.2
 
@@ -44,3 +45,8 @@ flutter:
   assets:
     - assets/brand_name.db
     - lib/brand_name.sql
+    - lib/Payment/reward_rules.sql
+    - lib/Payment/discount_rules.sql
+    - lib/Payment/rule_store_map.sql
+    - lib/Payment/stores.sql
+    - lib/Payment/payment_options.sql
