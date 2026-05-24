@@ -9,6 +9,7 @@ import 'package:dio/dio.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:hi/features/invoice/presentation/screens/carrier_input_screen.dart';
 import 'package:hi/features/invoice/presentation/screens/member_barcode_screen.dart';
+import 'package:hi/features/invoice/presentation/screens/payment_sheet_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -26,8 +27,6 @@ void main() async {
 
   runApp(const MyApp());
 }
-
-// ── App ───────────────────────────────────────────────────────────────────────
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -58,8 +57,6 @@ class MyApp extends StatelessWidget {
   }
 }
 
-// ── Root：底部導覽（3 Tab） ────────────────────────────────────────────────────
-
 class RootScreen extends StatefulWidget {
   const RootScreen({super.key});
 
@@ -69,7 +66,6 @@ class RootScreen extends StatefulWidget {
 
 class _RootScreenState extends State<RootScreen> {
   int _currentIndex = 0;
-
   Database? _db;
   List<String> _dbKeywords = [];
   bool _dbReady = false;
@@ -79,8 +75,6 @@ class _RootScreenState extends State<RootScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _initDatabase());
   }
-
-  // ── DB 初始化 ─────────────────────────────────────────────────────────────
 
   Future<void> _initDatabase() async {
     try {
@@ -143,8 +137,6 @@ class _RootScreenState extends State<RootScreen> {
     await batch.commit(noResult: true);
   }
 
-  // ── Build ─────────────────────────────────────────────────────────────────
-
   @override
   Widget build(BuildContext context) {
     final pages = [
@@ -154,10 +146,7 @@ class _RootScreenState extends State<RootScreen> {
     ];
 
     return Scaffold(
-      body: IndexedStack(
-        index: _currentIndex,
-        children: pages,
-      ),
+      body: IndexedStack(index: _currentIndex, children: pages),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: (i) => setState(() => _currentIndex = i),
@@ -188,24 +177,12 @@ class _RootScreenState extends State<RootScreen> {
 }
 
 // ── 首頁 Tab ──────────────────────────────────────────────────────────────────
-//
-// 狀態：
-//   _selectedStore  → 從附近店家清單選中的那家（session 層級，APP 殺掉即清除）
-//   _activeCard     → 目前三個按鈕中選中哪個（member / payment / carrier）
-//   _displayList    → 附近店家清單（定位後取得）
-//   _isLoading      → 定位 / API 載入中
-//
-// 邏輯：
-//   - 點「迴轉」圖示 → 重新定位並更新清單，同時清除 _selectedStore
-//   - 點清單任一行  → 底部 Sheet 選店，選完後 _selectedStore 更新
-//   - 三個按鈕切換  → 顯示對應的條碼區（從 CarrierInputScreen / MemberBarcodeScreen 邏輯借用）
 
 enum _ActiveCard { member, payment, carrier }
 
 class HomeTab extends StatefulWidget {
   final List<String> dbKeywords;
   final bool dbReady;
-
   const HomeTab({super.key, required this.dbKeywords, required this.dbReady});
 
   @override
@@ -215,15 +192,10 @@ class HomeTab extends StatefulWidget {
 class _HomeTabState extends State<HomeTab> {
   static const String _apiKey = 'AIzaSyAly-Vst9UhgyUmQTKFdaCtwNEbNBIzQu4';
 
-  // ── 狀態 ──
   List<Map<String, String>> _displayList = [];
   bool _isLoading = false;
   String _permissionMessage = '';
-
-  // 當前選中店家（session 層級）
   Map<String, String>? _selectedStore;
-
-  // 三按鈕狀態
   _ActiveCard _activeCard = _ActiveCard.member;
 
   @override
@@ -231,8 +203,6 @@ class _HomeTabState extends State<HomeTab> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _updatePermissionMessage());
   }
-
-  // ── 定位相關 ──────────────────────────────────────────────────────────────
 
   Future<void> _updatePermissionMessage() async {
     final status = await Permission.locationWhenInUse.status;
@@ -258,12 +228,11 @@ class _HomeTabState extends State<HomeTab> {
     }
   }
 
-  /// 重新定位並取得附近店家，同時清除已選店家
   Future<void> _startDetection() async {
     if (_isLoading || !widget.dbReady) return;
     setState(() {
       _isLoading = true;
-      _selectedStore = null; // 重新定位就清掉選擇
+      _selectedStore = null;
     });
 
     try {
@@ -374,12 +343,8 @@ class _HomeTabState extends State<HomeTab> {
     }
   }
 
-  // ── 選擇店家 Sheet ────────────────────────────────────────────────────────
-
-  /// 顯示附近店家清單 Sheet，選完後更新 _selectedStore
   Future<void> _showStorePickerSheet() async {
     if (_displayList.isEmpty) {
-      // 還沒定位過，先提示
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('請先點右上角 ↻ 偵測附近店家')),
       );
@@ -401,29 +366,20 @@ class _HomeTabState extends State<HomeTab> {
     );
   }
 
-  // ── 進入條碼 / 載具畫面 ───────────────────────────────────────────────────
-
+  // ★ 行動支付 → 底部選單 PaymentSheet
   void _navigateToActiveScreen() {
     switch (_activeCard) {
       case _ActiveCard.member:
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => MemberBarcodeScreen(
-              brandName: _selectedStore?['name'],
-            ),
+            builder: (_) => MemberBarcodeScreen(brandName: _selectedStore?['name']),
             fullscreenDialog: true,
           ),
         );
       case _ActiveCard.payment:
-        // 行動支付目前導向載具畫面（未來可換成行動支付選單）
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => const CarrierInputScreen(),
-            fullscreenDialog: true,
-          ),
-        );
+        // 跳出底部選單而非直接 push
+        PaymentSheet.show(context);
       case _ActiveCard.carrier:
         Navigator.push(
           context,
@@ -435,8 +391,6 @@ class _HomeTabState extends State<HomeTab> {
     }
   }
 
-  // ── UI ────────────────────────────────────────────────────────────────────
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -447,13 +401,11 @@ class _HomeTabState extends State<HomeTab> {
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.white,
         actions: [
-          // 定位授權
           IconButton(
             onPressed: _requestPermission,
             icon: const Icon(Icons.location_on_outlined),
             tooltip: '定位權限',
           ),
-          // 重新定位（迴轉圖示）
           IconButton(
             onPressed: _isLoading ? null : _startDetection,
             icon: _isLoading
@@ -469,7 +421,6 @@ class _HomeTabState extends State<HomeTab> {
       ),
       body: Column(
         children: [
-          // ── 權限提示橫幅 ──────────────────────────────────────────────────
           if (_permissionMessage.isNotEmpty)
             Material(
               color: Colors.orange.shade50,
@@ -490,7 +441,6 @@ class _HomeTabState extends State<HomeTab> {
                 ),
               ),
             ),
-
           Expanded(
             child: !widget.dbReady
                 ? const Center(child: CircularProgressIndicator.adaptive())
@@ -499,11 +449,8 @@ class _HomeTabState extends State<HomeTab> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // ── 主卡片：店家名 + 三按鈕 + 條碼區 ──────────────
                         _buildMainCard(context),
                         const SizedBox(height: 16),
-
-                        // ── 附近店家清單（取代原本的「店家優惠資訊」） ────
                         _buildNearbySection(),
                       ],
                     ),
@@ -513,8 +460,6 @@ class _HomeTabState extends State<HomeTab> {
       ),
     );
   }
-
-  // ── 主卡片 ────────────────────────────────────────────────────────────────
 
   Widget _buildMainCard(BuildContext context) {
     final hasStore = _selectedStore != null;
@@ -538,7 +483,6 @@ class _HomeTabState extends State<HomeTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 店家名稱列
           Row(
             children: [
               Container(
@@ -548,10 +492,8 @@ class _HomeTabState extends State<HomeTab> {
                   color: hasStore ? Colors.blue.shade50 : Colors.grey.shade100,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Icon(
-                  Icons.store,
-                  color: hasStore ? Colors.blue : Colors.grey,
-                ),
+                child: Icon(Icons.store,
+                    color: hasStore ? Colors.blue : Colors.grey),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -567,29 +509,25 @@ class _HomeTabState extends State<HomeTab> {
                       ),
                     ),
                     if (storeFullName.isNotEmpty)
-                      Text(
-                        storeFullName,
-                        style: const TextStyle(fontSize: 11, color: Colors.grey),
-                      ),
+                      Text(storeFullName,
+                          style:
+                              const TextStyle(fontSize: 11, color: Colors.grey)),
                   ],
                 ),
               ),
-              // 切換店家按鈕
               TextButton.icon(
                 onPressed: _showStorePickerSheet,
                 icon: const Icon(Icons.swap_horiz, size: 16),
                 label: const Text('切換'),
                 style: TextButton.styleFrom(
                   foregroundColor: Colors.blue,
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 ),
               ),
             ],
           ),
-
           const SizedBox(height: 16),
-
-          // 三按鈕列
           Row(
             children: [
               _buildToggleBtn(
@@ -614,10 +552,7 @@ class _HomeTabState extends State<HomeTab> {
               ),
             ],
           ),
-
           const SizedBox(height: 16),
-
-          // 條碼區（根據 _activeCard 顯示對應說明 + 入口按鈕）
           _buildBarcodeArea(hasStore),
         ],
       ),
@@ -643,7 +578,8 @@ class _HomeTabState extends State<HomeTab> {
           child: Column(
             children: [
               Icon(icon,
-                  size: 20, color: active ? Colors.white : Colors.grey.shade600),
+                  size: 20,
+                  color: active ? Colors.white : Colors.grey.shade600),
               const SizedBox(height: 4),
               Text(
                 label,
@@ -661,7 +597,6 @@ class _HomeTabState extends State<HomeTab> {
   }
 
   Widget _buildBarcodeArea(bool hasStore) {
-    // 未選店家時顯示提示
     if (!hasStore) {
       return Container(
         width: double.infinity,
@@ -673,7 +608,8 @@ class _HomeTabState extends State<HomeTab> {
         ),
         child: Column(
           children: [
-            Icon(Icons.touch_app_outlined, size: 36, color: Colors.grey.shade400),
+            Icon(Icons.touch_app_outlined,
+                size: 36, color: Colors.grey.shade400),
             const SizedBox(height: 8),
             Text(
               '請先點右上角 ↻ 定位\n再從下方選擇店家',
@@ -685,22 +621,21 @@ class _HomeTabState extends State<HomeTab> {
       );
     }
 
-    // 各按鈕對應的說明文字
     final String title;
     final String subtitle;
     final IconData icon;
 
     switch (_activeCard) {
       case _ActiveCard.member:
-        // 7-11 限定提示
         final is711 = _selectedStore!['name']!.contains('7-ELEVEN') ||
             _selectedStore!['name']!.contains('7-11');
-        title = is711 ? '7-ELEVEN 會員條碼' : '${_selectedStore!['name']!} 會員條碼';
+        title =
+            is711 ? '7-ELEVEN 會員條碼' : '${_selectedStore!['name']!} 會員條碼';
         subtitle = '點擊展示條碼給店員掃描';
         icon = Icons.person_outline;
       case _ActiveCard.payment:
         title = '行動支付';
-        subtitle = '點擊選擇支付方式';
+        subtitle = '點擊選擇支付平台、付款方式與等級';
         icon = Icons.payment_outlined;
       case _ActiveCard.carrier:
         title = '電子載具';
@@ -745,7 +680,8 @@ class _HomeTabState extends State<HomeTab> {
                   const SizedBox(height: 2),
                   Text(
                     subtitle,
-                    style: TextStyle(fontSize: 12, color: Colors.blue.shade600),
+                    style: TextStyle(
+                        fontSize: 12, color: Colors.blue.shade600),
                   ),
                 ],
               ),
@@ -756,8 +692,6 @@ class _HomeTabState extends State<HomeTab> {
       ),
     );
   }
-
-  // ── 附近店家 Section ──────────────────────────────────────────────────────
 
   Widget _buildNearbySection() {
     return Column(
@@ -819,12 +753,13 @@ class _HomeTabState extends State<HomeTab> {
             : null,
       ),
       child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
         leading: Container(
           width: 44,
           height: 44,
           decoration: BoxDecoration(
-            color: isSelected ? Colors.blue.shade50 : Colors.blue.shade50,
+            color: Colors.blue.shade50,
             borderRadius: BorderRadius.circular(12),
           ),
           child: Icon(Icons.store,
@@ -865,51 +800,44 @@ class _StorePickerSheet extends StatelessWidget {
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       padding: EdgeInsets.fromLTRB(
-        20, 12, 20, MediaQuery.of(context).padding.bottom + 28,
-      ),
+          20, 12, 20, MediaQuery.of(context).padding.bottom + 28),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Handle
           Center(
             child: Container(
               width: 40,
               height: 4,
               margin: const EdgeInsets.only(bottom: 16),
               decoration: BoxDecoration(
-                color: cs.outlineVariant,
-                borderRadius: BorderRadius.circular(2),
-              ),
+                  color: cs.outlineVariant,
+                  borderRadius: BorderRadius.circular(2)),
             ),
           ),
-          Text(
-            '選擇店家',
-            style: TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.w600,
-              color: cs.onSurface,
-            ),
-          ),
+          Text('選擇店家',
+              style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w600,
+                  color: cs.onSurface)),
           const SizedBox(height: 4),
-          Text(
-            '選擇後將顯示對應的會員/支付條碼',
-            style: TextStyle(fontSize: 13, color: cs.onSurface.withOpacity(0.5)),
-          ),
+          Text('選擇後將顯示對應的會員/支付條碼',
+              style: TextStyle(
+                  fontSize: 13, color: cs.onSurface.withOpacity(0.5))),
           const SizedBox(height: 16),
           ...stores.map((s) {
             final selected = selectedStore?['fullName'] == s['fullName'];
             return ListTile(
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12)),
-              leading: Icon(
-                Icons.store,
-                color: selected ? Colors.blue : cs.onSurface.withOpacity(0.5),
-              ),
+              leading: Icon(Icons.store,
+                  color: selected
+                      ? Colors.blue
+                      : cs.onSurface.withOpacity(0.5)),
               title: Text(s['name']!,
                   style: const TextStyle(fontWeight: FontWeight.w500)),
-              subtitle: Text(s['fullName']!,
-                  style: const TextStyle(fontSize: 11)),
+              subtitle:
+                  Text(s['fullName']!, style: const TextStyle(fontSize: 11)),
               trailing: selected
                   ? const Icon(Icons.check_circle, color: Colors.blue)
                   : null,
@@ -940,21 +868,17 @@ class MemberTab extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // ── 行動支付 ────────────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.only(left: 4, bottom: 10),
-            child: Text(
-              '行動支付',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey[500],
-                letterSpacing: 0.5,
-              ),
-            ),
+            child: Text('行動支付',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey[500],
+                    letterSpacing: 0.5)),
           ),
 
-          // 四大超商分類（子類別各有 + 號）
+          // 四大超商
           _SectionCard(
             title: '四大超商',
             icon: Icons.store_outlined,
@@ -962,43 +886,35 @@ class MemberTab extends StatelessWidget {
             children: [
               _SubEntry(
                 label: '全家',
-                onAdd: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const MemberBarcodeScreen(brandName: '全家便利商店'),
-                    fullscreenDialog: true,
-                  ),
-                ),
+                onAdd: () => Navigator.push(context,
+                    MaterialPageRoute(
+                        builder: (_) => const MemberBarcodeScreen(
+                            brandName: '全家便利商店'),
+                        fullscreenDialog: true)),
               ),
               _SubEntry(
                 label: '7-ELEVEN',
-                onAdd: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const MemberBarcodeScreen(brandName: '7-ELEVEN'),
-                    fullscreenDialog: true,
-                  ),
-                ),
+                onAdd: () => Navigator.push(context,
+                    MaterialPageRoute(
+                        builder: (_) => const MemberBarcodeScreen(
+                            brandName: '7-ELEVEN'),
+                        fullscreenDialog: true)),
               ),
               _SubEntry(
                 label: '萊爾富',
-                onAdd: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const MemberBarcodeScreen(brandName: '萊爾富'),
-                    fullscreenDialog: true,
-                  ),
-                ),
+                onAdd: () => Navigator.push(context,
+                    MaterialPageRoute(
+                        builder: (_) => const MemberBarcodeScreen(
+                            brandName: '萊爾富'),
+                        fullscreenDialog: true)),
               ),
               _SubEntry(
                 label: 'OK',
-                onAdd: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const MemberBarcodeScreen(brandName: 'OK便利商店'),
-                    fullscreenDialog: true,
-                  ),
-                ),
+                onAdd: () => Navigator.push(context,
+                    MaterialPageRoute(
+                        builder: (_) => const MemberBarcodeScreen(
+                            brandName: 'OK便利商店'),
+                        fullscreenDialog: true)),
                 divider: false,
               ),
             ],
@@ -1006,19 +922,31 @@ class MemberTab extends StatelessWidget {
 
           const SizedBox(height: 12),
 
-          // 行動支付子類別
+          // ★ Pay 區塊：點 + 號跳出底部選單 PaymentSheet
           _SectionCard(
-            title: 'Pay',
+            title: '行動支付',
             icon: Icons.payment_outlined,
             iconColor: Colors.green,
             children: [
               _SubEntry(
-                label: 'Line Pay',
-                onAdd: () {},
+                label: '悠遊付',
+                onAdd: () => PaymentSheet.show(context),
               ),
               _SubEntry(
-                label: 'JKO Pay',
-                onAdd: () {},
+                label: '街口支付',
+                onAdd: () => PaymentSheet.show(context),
+              ),
+              _SubEntry(
+                label: '全支付',
+                onAdd: () => PaymentSheet.show(context),
+              ),
+              _SubEntry(
+                label: '台灣Pay',
+                onAdd: () => PaymentSheet.show(context),
+              ),
+              _SubEntry(
+                label: 'Line Pay',
+                onAdd: () => PaymentSheet.show(context),
                 divider: false,
               ),
             ],
@@ -1026,32 +954,26 @@ class MemberTab extends StatelessWidget {
 
           const SizedBox(height: 28),
 
-          // ── 載具 ────────────────────────────────────────────────────────
+          // 載具
           Row(
             children: [
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.only(left: 4, bottom: 10),
-                  child: Text(
-                    '載具',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey[500],
-                      letterSpacing: 0.5,
-                    ),
-                  ),
+                  child: Text('載具',
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey[500],
+                          letterSpacing: 0.5)),
                 ),
               ),
               IconButton(
                 icon: const Icon(Icons.add, size: 20),
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const CarrierInputScreen(),
-                    fullscreenDialog: true,
-                  ),
-                ),
+                onPressed: () => Navigator.push(context,
+                    MaterialPageRoute(
+                        builder: (_) => const CarrierInputScreen(),
+                        fullscreenDialog: true)),
                 tooltip: '新增載具',
               ),
             ],
@@ -1062,29 +984,22 @@ class MemberTab extends StatelessWidget {
             iconColor: Colors.indigo,
             title: '電子載具',
             subtitle: '手機條碼 /XXXXXXX',
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => const CarrierInputScreen(),
-                fullscreenDialog: true,
-              ),
-            ),
+            onTap: () => Navigator.push(context,
+                MaterialPageRoute(
+                    builder: (_) => const CarrierInputScreen(),
+                    fullscreenDialog: true)),
           ),
 
           const SizedBox(height: 28),
 
-          // ── 其他 ────────────────────────────────────────────────────────
           Padding(
             padding: const EdgeInsets.only(left: 4, bottom: 10),
-            child: Text(
-              '其他',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey[500],
-                letterSpacing: 0.5,
-              ),
-            ),
+            child: Text('其他',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey[500],
+                    letterSpacing: 0.5)),
           ),
           _EntryCard(
             icon: Icons.info_outline,
@@ -1095,9 +1010,7 @@ class MemberTab extends StatelessWidget {
               context: context,
               applicationName: '秒付辨識器',
               applicationVersion: 'v1.1.2',
-              children: const [
-                Text('快速出示會員條碼與電子載具，方便結帳使用。'),
-              ],
+              children: const [Text('快速出示會員條碼與電子載具，方便結帳使用。')],
             ),
           ),
         ],
@@ -1126,15 +1039,12 @@ class SettingsTab extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.only(left: 4, bottom: 10),
-            child: Text(
-              '一般',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey[500],
-                letterSpacing: 0.5,
-              ),
-            ),
+            child: Text('一般',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey[500],
+                    letterSpacing: 0.5)),
           ),
           _EntryCard(
             icon: Icons.info_outline,
@@ -1145,9 +1055,7 @@ class SettingsTab extends StatelessWidget {
               context: context,
               applicationName: '秒付辨識器',
               applicationVersion: 'v1.1.2',
-              children: const [
-                Text('快速出示會員條碼與電子載具，方便結帳使用。'),
-              ],
+              children: const [Text('快速出示會員條碼與電子載具，方便結帳使用。')],
             ),
           ),
         ],
@@ -1156,7 +1064,7 @@ class SettingsTab extends StatelessWidget {
   }
 }
 
-// ── 區塊卡片（帶子項目，子項目有 + 號） ───────────────────────────────────────
+// ── 區塊卡片 ──────────────────────────────────────────────────────────────────
 
 class _SectionCard extends StatelessWidget {
   final String title;
@@ -1178,9 +1086,9 @@ class _SectionCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(16),
       child: Column(
         children: [
-          // 區塊標題列（無 + 號）
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Row(
               children: [
                 Container(
@@ -1193,13 +1101,9 @@ class _SectionCard extends StatelessWidget {
                   child: Icon(icon, color: iconColor, size: 18),
                 ),
                 const SizedBox(width: 12),
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 15,
-                  ),
-                ),
+                Text(title,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w600, fontSize: 15)),
               ],
             ),
           ),
@@ -1211,7 +1115,7 @@ class _SectionCard extends StatelessWidget {
   }
 }
 
-// ── 子項目列（各有 + 號） ─────────────────────────────────────────────────────
+// ── 子項目列 ──────────────────────────────────────────────────────────────────
 
 class _SubEntry extends StatelessWidget {
   final String label;
@@ -1269,7 +1173,8 @@ class _EntryCard extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(16),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          padding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           child: Row(
             children: [
               Container(
@@ -1291,7 +1196,8 @@ class _EntryCard extends StatelessWidget {
                             fontWeight: FontWeight.w600, fontSize: 15)),
                     const SizedBox(height: 2),
                     Text(subtitle,
-                        style: TextStyle(fontSize: 12, color: Colors.grey[500])),
+                        style: TextStyle(
+                            fontSize: 12, color: Colors.grey[500])),
                   ],
                 ),
               ),
