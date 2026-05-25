@@ -11,9 +11,12 @@ dependencies:
   flutter:
     sdk: flutter
 
-  url_launcher : ^6.2.5
+  # 連結
+  url_launcher: ^6.2.5
 
+  # 條碼
   barcode: ^2.2.5
+  barcode_widget: ^2.0.4
   flutter_svg: ^2.0.10
 
   cupertino_icons: ^1.0.8
@@ -32,8 +35,11 @@ dependencies:
   image_picker: ^1.1.2
   # 本地端免費 OCR（不需要 API 金鑰）
   google_mlkit_text_recognition: ^0.13.1
-  # 條碼顯示
-  barcode_widget: ^2.0.4
+
+  # 加速度計（支付畫面傾斜翻轉）
+  sensors_plus: ^4.0.0
+  # 亮度控制（支付畫面自動最亮）
+  screen_brightness: ^0.2.2+1
 
   shared_preferences: ^2.2.2
 
