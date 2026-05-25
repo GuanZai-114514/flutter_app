@@ -11,6 +11,8 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:barcode_widget/barcode_widget.dart';
 import 'package:hi/features/invoice/presentation/screens/carrier_input_screen.dart';
 import 'package:hi/features/invoice/presentation/screens/member_barcode_screen.dart';
 
@@ -36,6 +38,7 @@ void main() async {
 // ════════════════════════════════════════════════════════════════════════════
 
 // 行動支付清單（會員Tab 新增/刪除 → 首頁卡片即時更新）
+// ⚠️ 改為持久化：啟動時從 SharedPreferences 載入
 final payMethodsNotifier = ValueNotifier<List<String>>([]);
 
 // 各超商會員是否已設定
@@ -46,6 +49,69 @@ final memberSetupNotifier = ValueNotifier<Map<String, bool>>({
 // 載具是否已設定
 final carrierSetupNotifier = ValueNotifier<bool>(false);
 
+// ── 行動支付持久化 key ────────────────────────────────────────────────────
+const _kPayMethodsPrefKey = 'pay_methods_list';
+
+Future<void> loadPayMethods() async {
+  final prefs = await SharedPreferences.getInstance();
+  final saved = prefs.getStringList(_kPayMethodsPrefKey) ?? [];
+  payMethodsNotifier.value = saved;
+}
+
+Future<void> savePayMethods(List<String> ids) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setStringList(_kPayMethodsPrefKey, ids);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 折扣規則（對應 discount_rules.sql）
+// ════════════════════════════════════════════════════════════════════════════
+
+class DiscountRule {
+  final int id;
+  final String paymentSoftware; // 行動支付平台名稱
+  final String paymentMethod;
+  final String userLevel;
+  final double discountAmount;
+  final double minSpend;
+  final double equivalentRate; // 折扣率，越高越優惠
+  final bool isSpecial;
+  final String startDate;
+  final String endDate;
+  final double availableDays;
+  final String ruleDesc;
+
+  const DiscountRule({
+    required this.id,
+    required this.paymentSoftware,
+    required this.paymentMethod,
+    required this.userLevel,
+    required this.discountAmount,
+    required this.minSpend,
+    required this.equivalentRate,
+    required this.isSpecial,
+    required this.startDate,
+    required this.endDate,
+    required this.availableDays,
+    required this.ruleDesc,
+  });
+
+  factory DiscountRule.fromMap(Map<String, dynamic> m) => DiscountRule(
+        id: (m['id'] as num).toInt(),
+        paymentSoftware: m['payment_software'] as String,
+        paymentMethod: m['payment_method'] as String,
+        userLevel: m['user_level'] as String,
+        discountAmount: (m['discount_amount'] as num).toDouble(),
+        minSpend: (m['min_spend'] as num).toDouble(),
+        equivalentRate: (m['equivalent_rate'] as num).toDouble(),
+        isSpecial: (m['is_special'] as num) == 1,
+        startDate: m['start_date'] as String,
+        endDate: m['end_date'] as String,
+        availableDays: (m['available_days'] as num).toDouble(),
+        ruleDesc: m['rule_desc'] as String,
+      );
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // 行動支付平台定義（固定清單，含 deep link / universal link）
 // ════════════════════════════════════════════════════════════════════════════
@@ -54,10 +120,10 @@ class _PayPlatform {
   final String id;
   final String label;
   final Color color;
-  final String iconText;       // 色塊內顯示的簡短文字
-  final String? iosScheme;     // iOS deep link (e.g. "linepay://")
-  final String? androidScheme; // Android deep link
-  final String? universalUrl;  // 通用 fallback（App Store / Play Store）
+  final String iconText;
+  final String? iosScheme;
+  final String? androidScheme;
+  final String? universalUrl;
 
   const _PayPlatform({
     required this.id,
@@ -70,107 +136,86 @@ class _PayPlatform {
   });
 }
 
-// 支援的行動支付平台（含 deep link）
 const _kPayPlatforms = <_PayPlatform>[
   _PayPlatform(
-    id: 'linepay',
-    label: 'LINE Pay',
-    color: Color(0xFF00B900),
-    iconText: 'LINE\nPay',
-    iosScheme: 'linepay://',
-    androidScheme: 'linepay://',
+    id: 'linepay', label: 'LINE Pay',
+    color: Color(0xFF00B900), iconText: 'LINE\nPay',
+    iosScheme: 'linepay://', androidScheme: 'linepay://',
     universalUrl: 'https://line.me/en/pay',
   ),
   _PayPlatform(
-    id: 'jkopay',
-    label: '街口支付',
-    color: Color(0xFFE53935),
-    iconText: '街口',
-    iosScheme: 'jkos://',
-    androidScheme: 'jkos://',
+    id: 'jkopay', label: '街口支付',
+    color: Color(0xFFE53935), iconText: '街口',
+    iosScheme: 'jkos://', androidScheme: 'jkos://',
     universalUrl: 'https://www.jkopay.com',
   ),
   _PayPlatform(
-    id: 'allpay',
-    label: '全支付',
-    color: Color(0xFF1565C0),
-    iconText: '全支付',
-    iosScheme: 'fampay://',
-    androidScheme: 'fampay://',
+    id: 'allpay', label: '全支付',
+    color: Color(0xFF1565C0), iconText: '全支付',
+    iosScheme: 'fampay://', androidScheme: 'fampay://',
     universalUrl: 'https://www.family.com.tw/marketing/allpay.aspx',
   ),
   _PayPlatform(
-    id: 'taiwanpay',
-    label: '台灣Pay',
-    color: Color(0xFF2E7D32),
-    iconText: '台灣\nPay',
-    iosScheme: 'twpay://',
-    androidScheme: 'twpay://',
+    id: 'taiwanpay', label: '台灣Pay',
+    color: Color(0xFF2E7D32), iconText: '台灣\nPay',
+    iosScheme: 'twpay://', androidScheme: 'twpay://',
     universalUrl: 'https://www.taiwanpay.net.tw',
   ),
   _PayPlatform(
-    id: 'easycard',
-    label: '悠遊付',
-    color: Color(0xFF00838F),
-    iconText: '悠遊付',
-    iosScheme: 'easycard://',
-    androidScheme: 'easycard://',
+    id: 'easycard', label: '悠遊付',
+    color: Color(0xFF00838F), iconText: '悠遊付',
+    iosScheme: 'easycard://', androidScheme: 'easycard://',
     universalUrl: 'https://www.easycard.com.tw/easywallet',
   ),
   _PayPlatform(
-    id: 'icashpay',
-    label: 'icash Pay',
-    color: Color(0xFFEF6C00),
-    iconText: 'icash',
-    iosScheme: 'icashpay://',
-    androidScheme: 'icashpay://',
+    id: 'icashpay', label: 'icash Pay',
+    color: Color(0xFFEF6C00), iconText: 'icash',
+    iosScheme: 'icashpay://', androidScheme: 'icashpay://',
     universalUrl: 'https://www.icashpay.com.tw',
   ),
   _PayPlatform(
-    id: 'pxpay',
-    label: 'PX Pay',
-    color: Color(0xFFD32F2F),
-    iconText: 'PX\nPay',
-    iosScheme: 'pxpay://',
-    androidScheme: 'pxpay://',
+    id: 'pxpay', label: 'PX Pay',
+    color: Color(0xFFD32F2F), iconText: 'PX\nPay',
+    iosScheme: 'pxpay://', androidScheme: 'pxpay://',
     universalUrl: 'https://www.pxmart.com.tw/px/pay.html',
   ),
   _PayPlatform(
-    id: 'applepay',
-    label: 'Apple Pay',
-    color: Color(0xFF1C1C1E),
-    iconText: ' Pay',
-    iosScheme: null, // Apple Pay 透過 Wallet app
-    androidScheme: null,
-    universalUrl: null, // iOS only，無 deep link，需 native API
+    id: 'applepay', label: 'Apple Pay',
+    color: Color(0xFF1C1C1E), iconText: ' Pay',
   ),
   _PayPlatform(
-    id: 'googlepay',
-    label: 'Google Pay',
-    color: Color(0xFF4285F4),
-    iconText: 'G\nPay',
-    iosScheme: 'googlepay://',
-    androidScheme: 'googlepay://',
+    id: 'googlepay', label: 'Google Pay',
+    color: Color(0xFF4285F4), iconText: 'G\nPay',
+    iosScheme: 'googlepay://', androidScheme: 'googlepay://',
     universalUrl: 'https://pay.google.com',
   ),
   _PayPlatform(
-    id: 'samsungpay',
-    label: 'Samsung Pay',
-    color: Color(0xFF1428A0),
-    iconText: 'S Pay',
-    iosScheme: null,
+    id: 'samsungpay', label: 'Samsung Pay',
+    color: Color(0xFF1428A0), iconText: 'S Pay',
     androidScheme: 'samsungpay://',
     universalUrl: 'https://www.samsung.com/tw/apps/samsung-pay/',
   ),
 ];
 
-// 把 ID 轉換回平台定義
 _PayPlatform? _platformById(String id) {
   try {
     return _kPayPlatforms.firstWhere((p) => p.id == id);
   } catch (_) {
     return null;
   }
+}
+
+// ── discount_rules 的 payment_software 對映到 _PayPlatform.id ────────────
+String? _discountSoftwareToId(String software) {
+  const map = {
+    '悠遊付': 'easycard',
+    '街口支付': 'jkopay',
+    '全支付': 'allpay',
+    '台灣Pay': 'taiwanpay',
+    'Line Pay': 'linepay',
+    'LINE Pay': 'linepay',
+  };
+  return map[software];
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -199,7 +244,7 @@ class _StoreInfo {
 
 class _Condition {
   final String text;
-  final bool isRed; // true=條件(紅) false=折扣(黑)
+  final bool isRed;
   const _Condition(this.text, {this.isRed = false});
 }
 
@@ -295,6 +340,8 @@ class _RootScreenState extends State<RootScreen> {
   @override
   void initState() {
     super.initState();
+    // ✅ 啟動時載入持久化的行動支付清單
+    loadPayMethods();
     WidgetsBinding.instance.addPostFrameCallback((_) => _initDatabase());
   }
 
@@ -355,7 +402,6 @@ class _RootScreenState extends State<RootScreen> {
     await batch.commit(noResult: true);
   }
 
-  // 供子 Widget 切換 Tab（首頁 pill → 跳到會員 Tab）
   void switchTab(int index) => setState(() => _currentIndex = index);
 
   @override
@@ -411,7 +457,7 @@ class HomeTab extends StatefulWidget {
   State<HomeTab> createState() => _HomeTabState();
 }
 
-class _HomeTabState extends State<HomeTab> {
+class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
   static const String _apiKey = 'AIzaSyAly-Vst9UhgyUmQTKFdaCtwNEbNBIzQu4';
   static const _volumeChannel = MethodChannel('com.example.hi/volume');
 
@@ -419,38 +465,166 @@ class _HomeTabState extends State<HomeTab> {
   bool _isLoading = false;
   String _permissionMessage = '';
 
-  // 定位後最近的門市（用於顯示門市全名）
   Map<String, String>? _selectedStore;
-
-  // 目前高亮的超商圓圈
   String _activeStoreId = 'fm';
+
+  // ── 傾斜偵測 ─────────────────────────────────────────────────────────────
+  StreamSubscription? _accelSub;
+  // true = 手機向前傾（給店員看），顯示條碼 overlay
+  bool _isTilted = false;
+  // 防抖：避免加速度計抖動反覆觸發
+  DateTime? _lastTiltChange;
+
+  // ── 折扣規則 ─────────────────────────────────────────────────────────────
+  // 從 DB 讀取後暫存，key = storeId
+  Map<int, List<DiscountRule>> _discountsByStore = {};
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _updatePermissionMessage());
-    _volumeChannel.setMethodCallHandler((call) async {
-      if (call.method == 'volumeDown' && mounted) _handleVolumeDown();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _updatePermissionMessage();
+      _loadDiscountRules();
+    });
+    _volumeChannel.setMethodCallHandler(_handleVolumeMethodCall);
+    _startAccelerometer();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _accelSub?.cancel();
+    super.dispose();
+  }
+
+  // ── 加速度計：傾斜偵測（僅首頁使用） ────────────────────────────────────
+  void _startAccelerometer() {
+    _accelSub = accelerometerEventStream(
+      samplingPeriod: SensorInterval.normalInterval,
+    ).listen((event) {
+      // Y 軸 < -3 表示螢幕面朝店員（手機向前傾），> -1.5 表示收回
+      final shouldTilt = event.y < -3.0;
+      final shouldUntilt = event.y > -1.5;
+
+      if (shouldTilt == _isTilted) return;
+
+      // 防抖 300ms
+      final now = DateTime.now();
+      if (_lastTiltChange != null &&
+          now.difference(_lastTiltChange!).inMilliseconds < 300) return;
+      _lastTiltChange = now;
+
+      if (shouldTilt && !_isTilted) {
+        if (mounted) setState(() => _isTilted = true);
+      } else if (shouldUntilt && _isTilted) {
+        if (mounted) setState(() => _isTilted = false);
+      }
     });
   }
 
-  // 音量下鍵 → 直接開啟第一個已啟用的行動支付 APP
-  void _handleVolumeDown() {
-    final ids = payMethodsNotifier.value;
-    if (ids.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('尚未設定行動支付，請至「會員」頁面選擇')),
+  // ── 折扣規則載入（從 sqflite DB 讀取 discount_rules + rule_store_map） ──
+  Future<void> _loadDiscountRules() async {
+    try {
+      final dbPath = p.join(await getDatabasesPath(), 'pay_helper.db');
+      if (!await databaseExists(dbPath)) return;
+      final db = await openDatabase(dbPath, readOnly: true);
+
+      // 確認 discount_rules 表存在
+      final tables = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='discount_rules'",
       );
-      return;
+      if (tables.isEmpty) {
+        await db.close();
+        return;
+      }
+
+      // 取得折扣規則
+      final discountRows = await db.query('discount_rules');
+      final rules = discountRows.map(DiscountRule.fromMap).toList();
+
+      // 取得 rule_store_map（type = 'discount'）
+      final mapRows = await db.rawQuery(
+        "SELECT rule_id, store_id FROM rule_store_map WHERE rule_type = 'discount'",
+      );
+      await db.close();
+
+      // 建立 storeId → [DiscountRule] 的映射
+      final Map<int, List<DiscountRule>> byStore = {};
+      for (final row in mapRows) {
+        final ruleId = (row['rule_id'] as num).toInt();
+        final storeId = (row['store_id'] as num).toInt();
+        final rule = rules.where((r) => r.id == ruleId).toList();
+        if (rule.isNotEmpty) {
+          byStore.putIfAbsent(storeId, () => []).add(rule.first);
+        }
+      }
+
+      if (mounted) setState(() => _discountsByStore = byStore);
+    } catch (e) {
+      debugPrint('❌ 折扣規則載入失敗: $e');
     }
-    final platform = _platformById(ids.first);
-    if (platform != null) _launchPayApp(platform);
   }
 
-  // 開啟行動支付 APP（deep link → fallback 到 universal URL）
+  // ── 取得當前超商的最佳折扣行動支付 ──────────────────────────────────────
+  // storeId: 1=全家, 2=7-11, 3=萊爾富, 4=OK（對應 rule_store_map）
+  int _storeIdFromActiveStore() {
+    switch (_activeStoreId) {
+      case 'fm':     return 1;
+      case 'seven':  return 2;
+      case 'hilife': return 3;
+      case 'ok':     return 4;
+      default:       return 1;
+    }
+  }
+
+  /// 回傳當前超商中，依 equivalentRate 排序的最佳折扣規則清單
+  List<DiscountRule> _getBestDiscounts() {
+    final storeId = _storeIdFromActiveStore();
+    final rules = _discountsByStore[storeId] ?? [];
+    // 依 equivalentRate 降冪排序，同率再依 discountAmount 降冪
+    final sorted = List<DiscountRule>.from(rules)
+      ..sort((a, b) {
+        final rateCmp = b.equivalentRate.compareTo(a.equivalentRate);
+        if (rateCmp != 0) return rateCmp;
+        return b.discountAmount.compareTo(a.discountAmount);
+      });
+    return sorted;
+  }
+
+  /// 最優惠的行動支付平台（用於音量鍵跳轉）
+  _PayPlatform? _getBestPayPlatform() {
+    final discounts = _getBestDiscounts();
+    for (final rule in discounts) {
+      final id = _discountSoftwareToId(rule.paymentSoftware);
+      if (id != null) {
+        final platform = _platformById(id);
+        if (platform != null) return platform;
+      }
+    }
+    // fallback：使用者設定的第一個
+    final ids = payMethodsNotifier.value;
+    if (ids.isNotEmpty) return _platformById(ids.first);
+    return null;
+  }
+
+  // ── 音量鍵處理（僅首頁） ─────────────────────────────────────────────────
+  Future<dynamic> _handleVolumeMethodCall(MethodCall call) async {
+    if (call.method == 'volumeDown' && mounted) {
+      final best = _getBestPayPlatform();
+      if (best != null) {
+        await _launchPayApp(best);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('尚未設定行動支付，請至「會員」頁面選擇')),
+        );
+      }
+    }
+  }
+
+  // ── 開啟行動支付 APP ──────────────────────────────────────────────────────
   Future<void> _launchPayApp(_PayPlatform platform) async {
     final scheme = Platform.isIOS ? platform.iosScheme : platform.androidScheme;
-
     if (scheme != null) {
       final uri = Uri.parse(scheme);
       if (await canLaunchUrl(uri)) {
@@ -458,16 +632,13 @@ class _HomeTabState extends State<HomeTab> {
         return;
       }
     }
-    // Fallback：開啟官網或 App Store
     if (platform.universalUrl != null) {
       final uri = Uri.parse(platform.universalUrl!);
       await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('無法開啟 ${platform.label}')),
-        );
-      }
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('無法開啟 ${platform.label}')),
+      );
     }
   }
 
@@ -552,7 +723,6 @@ class _HomeTabState extends State<HomeTab> {
             const SnackBar(content: Text('偵測不到支援的便利商店')),
           );
         } else {
-          // 自動選最近的那家並高亮圓圈
           final nearest = matches.first;
           final id = _matchStoreId(nearest['name']!);
           setState(() {
@@ -644,7 +814,9 @@ class _HomeTabState extends State<HomeTab> {
     return null;
   }
 
-  // ── UI ──────────────────────────────────────────────────────────────────
+  // ════════════════════════════════════════════════════════════════════════
+  // UI
+  // ════════════════════════════════════════════════════════════════════════
 
   @override
   Widget build(BuildContext context) {
@@ -663,46 +835,127 @@ class _HomeTabState extends State<HomeTab> {
           ),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
-          // 權限提示橫幅
-          if (_permissionMessage.isNotEmpty)
-            Material(
-              color: Colors.orange.shade50,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                child: Row(
-                  children: [
-                    const Icon(Icons.warning_amber_rounded,
-                        color: Colors.orange, size: 18),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(_permissionMessage,
-                          style: const TextStyle(fontSize: 12, color: Colors.orange)),
+          // ── 主要內容 ────────────────────────────────────────────────────
+          Column(
+            children: [
+              if (_permissionMessage.isNotEmpty)
+                Material(
+                  color: Colors.orange.shade50,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 18),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(_permissionMessage,
+                              style: const TextStyle(fontSize: 12, color: Colors.orange)),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
+              Expanded(
+                child: !widget.dbReady
+                    ? const Center(child: CircularProgressIndicator.adaptive())
+                    : _buildMainLayout(context),
               ),
-            ),
-
-          Expanded(
-            child: !widget.dbReady
-                ? const Center(child: CircularProgressIndicator.adaptive())
-                : _buildMainLayout(context),
+            ],
           ),
+
+          // ── 傾斜時疊加條碼 Overlay（旋轉 180° 給店員看） ──────────────────
+          if (_isTilted) _buildTiltOverlay(context),
         ],
       ),
     );
   }
 
-  // ── 主佈局：上排圓圈 + 中央卡片 + 下排圓圈+定位鈕 + pill ────────────────
+  // ════════════════════════════════════════════════════════════════════════
+  // 傾斜時的全螢幕條碼 Overlay
+  // ════════════════════════════════════════════════════════════════════════
+
+  Widget _buildTiltOverlay(BuildContext context) {
+    return AnimatedOpacity(
+      opacity: _isTilted ? 1.0 : 0.0,
+      duration: const Duration(milliseconds: 250),
+      child: Container(
+        color: Colors.white,
+        child: SafeArea(
+          child: RotatedBox(
+            // 180° 旋轉，讓店員可以正向閱讀
+            quarterTurns: 2,
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  // ── 店員提示標頭 ───────────────────────────────────────
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.blue.shade200),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.barcode_reader, color: Colors.blue.shade700, size: 18),
+                        const SizedBox(width: 8),
+                        Text(
+                          '請掃描以下條碼',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.blue.shade800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  // ── 會員條碼區塊 ──────────────────────────────────────
+                  _TiltBarcodeSection(
+                    title: '會員條碼',
+                    icon: Icons.person_outline,
+                    prefKeyCode: 'member_barcode_${_kStores[_activeStoreId]?.name ?? "_generic"}',
+                    prefKeyType: 'member_type_${_kStores[_activeStoreId]?.name ?? "_generic"}',
+                  ),
+
+                  const SizedBox(height: 20),
+
+                  // ── 載具條碼區塊 ──────────────────────────────────────
+                  const _TiltCarrierSection(),
+
+                  const SizedBox(height: 20),
+
+                  // ── 收回提示 ─────────────────────────────────────────
+                  Text(
+                    '將手機收回即可返回首頁',
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // 主佈局（與原版相同，加入折扣資訊）
+  // ════════════════════════════════════════════════════════════════════════
 
   Widget _buildMainLayout(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
       child: Column(
         children: [
-          // 上排：全家（左）、7-ELEVEN（右）
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -710,15 +963,9 @@ class _HomeTabState extends State<HomeTab> {
               _buildStoreCircle('seven'),
             ],
           ),
-
           const SizedBox(height: 10),
-
-          // 中央卡片（彈性填滿）
           Expanded(child: _buildInfoCard()),
-
           const SizedBox(height: 10),
-
-          // 下排：萊爾富（左）、開始定位（中）、OK（右）
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -727,17 +974,12 @@ class _HomeTabState extends State<HomeTab> {
               _buildStoreCircle('ok'),
             ],
           ),
-
           const SizedBox(height: 12),
-
-          // 會員 or 載具 pill
           _buildMemberPill(context),
         ],
       ),
     );
   }
-
-  // ── 開始定位按鈕 ────────────────────────────────────────────────────────
 
   Widget _buildLocateButton() {
     return GestureDetector(
@@ -747,15 +989,12 @@ class _HomeTabState extends State<HomeTab> {
         width: 72,
         height: 72,
         decoration: BoxDecoration(
-          color: _isLoading
-              ? const Color(0xFF388E3C)
-              : const Color(0xFF1A73E8),
+          color: _isLoading ? const Color(0xFF388E3C) : const Color(0xFF1A73E8),
           shape: BoxShape.circle,
           border: Border.all(color: Colors.white, width: 3),
           boxShadow: [
             BoxShadow(
-              color: (_isLoading ? Colors.green : Colors.blue)
-                  .withOpacity(0.3),
+              color: (_isLoading ? Colors.green : Colors.blue).withOpacity(0.3),
               blurRadius: 8,
               offset: const Offset(0, 3),
             ),
@@ -765,8 +1004,7 @@ class _HomeTabState extends State<HomeTab> {
             ? const Center(
                 child: SizedBox(
                   width: 24, height: 24,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2.5, color: Colors.white),
+                  child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
                 ),
               )
             : const Column(
@@ -776,16 +1014,12 @@ class _HomeTabState extends State<HomeTab> {
                   SizedBox(height: 2),
                   Text('開始定位',
                       style: TextStyle(
-                          fontSize: 8,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white)),
+                          fontSize: 8, fontWeight: FontWeight.w700, color: Colors.white)),
                 ],
               ),
       ),
     );
   }
-
-  // ── 超商圓圈 ─────────────────────────────────────────────────────────────
 
   Widget _buildStoreCircle(String id) {
     final info = _kStores[id]!;
@@ -794,7 +1028,6 @@ class _HomeTabState extends State<HomeTab> {
     return GestureDetector(
       onTap: () {
         setState(() => _activeStoreId = id);
-        // 如果有定位結果，切換到該超商最近的門市
         final matched = _displayList
             .where((m) => _matchStoreId(m['name']!) == id)
             .toList();
@@ -838,7 +1071,6 @@ class _HomeTabState extends State<HomeTab> {
               ],
             ),
           ),
-          // 紅色 badge（有特殊回饋的超商）
           if (info.hasBadge)
             Positioned(
               top: 2, right: 2,
@@ -856,8 +1088,6 @@ class _HomeTabState extends State<HomeTab> {
     );
   }
 
-  // ── 超商 LOGO ─────────────────────────────────────────────────────────────
-
   Widget _buildStoreLogo(String id) {
     switch (id) {
       case 'fm':
@@ -870,8 +1100,7 @@ class _HomeTabState extends State<HomeTab> {
                 topLeft: Radius.circular(3), topRight: Radius.circular(3)),
             ),
             child: const Center(child: Text('Family',
-                style: TextStyle(fontSize: 6, fontWeight: FontWeight.w900,
-                    color: Colors.white))),
+                style: TextStyle(fontSize: 6, fontWeight: FontWeight.w900, color: Colors.white))),
           ),
           Container(
             width: 40, height: 17,
@@ -881,8 +1110,7 @@ class _HomeTabState extends State<HomeTab> {
                 bottomLeft: Radius.circular(3), bottomRight: Radius.circular(3)),
             ),
             child: const Center(child: Text('FamilyMart',
-                style: TextStyle(fontSize: 5, fontWeight: FontWeight.w800,
-                    color: Colors.white))),
+                style: TextStyle(fontSize: 5, fontWeight: FontWeight.w800, color: Colors.white))),
           ),
         ]);
       case 'seven':
@@ -904,18 +1132,14 @@ class _HomeTabState extends State<HomeTab> {
       case 'hilife':
         return Container(
           width: 36, height: 36,
-          decoration: const BoxDecoration(
-              color: Color(0xFFE53935), shape: BoxShape.circle),
+          decoration: const BoxDecoration(color: Color(0xFFE53935), shape: BoxShape.circle),
           child: const Center(child: Text('Hi',
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900,
-                  color: Colors.white))),
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: Colors.white))),
         );
       case 'ok':
         return Container(
           width: 40, height: 26,
-          decoration: BoxDecoration(
-              color: const Color(0xFFE53935),
-              borderRadius: BorderRadius.circular(4)),
+          decoration: BoxDecoration(color: const Color(0xFFE53935), borderRadius: BorderRadius.circular(4)),
           child: const Center(child: Text('OK',
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900,
                   color: Colors.white, letterSpacing: -0.5))),
@@ -925,7 +1149,9 @@ class _HomeTabState extends State<HomeTab> {
     }
   }
 
-  // ── 中央資訊卡片 ─────────────────────────────────────────────────────────
+  // ════════════════════════════════════════════════════════════════════════
+  // 中央資訊卡片（加入折扣優惠區塊）
+  // ════════════════════════════════════════════════════════════════════════
 
   Widget _buildInfoCard() {
     final store = _kStores[_activeStoreId]!;
@@ -933,6 +1159,8 @@ class _HomeTabState extends State<HomeTab> {
             _matchStoreId(_selectedStore!['name']!) == _activeStoreId)
         ? _selectedStore!['fullName']
         : null;
+
+    final bestDiscounts = _getBestDiscounts();
 
     return Container(
       width: double.infinity,
@@ -942,150 +1170,202 @@ class _HomeTabState extends State<HomeTab> {
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: const Color(0xFFE8E8E8)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // ─ 上半：LOGO列 + 店名/回饋/條件 ─────────────────────────────
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 左欄：LOGO + LINE Pay + 街口標籤
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildStoreLogo(_activeStoreId),
-                  const SizedBox(height: 8),
-                  _buildPayTag('LINE Pay', const Color(0xFF00B900)),
-                  const SizedBox(height: 4),
-                  _buildPayTag('街口支付', const Color(0xFFE53935)),
-                ],
-              ),
-
-              const SizedBox(width: 12),
-
-              // 右欄
-              Expanded(
-                child: Column(
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── 上半：LOGO列 + 店名 / 回饋 / 條件 ──────────────────────
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // 店名 + 右上角紅點
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(store.name,
-                                  style: const TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w700,
-                                      color: Color(0xFF111111))),
-                              if (branchName != null)
-                                Text(branchName,
-                                    style: const TextStyle(
-                                        fontSize: 10, color: Colors.grey),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis),
-                            ],
-                          ),
-                        ),
-                        if (store.hasBadge)
-                          Container(
-                            width: 9, height: 9,
-                            margin: const EdgeInsets.only(left: 4, top: 3),
-                            decoration: const BoxDecoration(
-                                color: Color(0xFFE53935),
-                                shape: BoxShape.circle),
-                          ),
-                      ],
-                    ),
-
+                    _buildStoreLogo(_activeStoreId),
+                    const SizedBox(height: 8),
+                    _buildPayTag('LINE Pay', const Color(0xFF00B900)),
                     const SizedBox(height: 4),
-
-                    // 回饋 XX%
-                    Text('回饋 ${store.cashback}',
-                        style: const TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w900,
-                            color: Color(0xFF1A73E8))),
-
-                    const SizedBox(height: 6),
-
-                    // 條件清單
-                    ...store.conditions.map((c) => Padding(
-                          padding: const EdgeInsets.only(bottom: 3),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Padding(
-                                padding: const EdgeInsets.only(top: 4),
-                                child: Container(
-                                  width: 6, height: 6,
-                                  decoration: BoxDecoration(
-                                    color: c.isRed
-                                        ? const Color(0xFFE53935)
-                                        : const Color(0xFF444444),
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 5),
-                              Expanded(
-                                child: Text(c.text,
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: c.isRed
-                                          ? FontWeight.w600
-                                          : FontWeight.w400,
+                    _buildPayTag('街口支付', const Color(0xFFE53935)),
+                  ],
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(store.name,
+                                    style: const TextStyle(
+                                        fontSize: 13, fontWeight: FontWeight.w700,
+                                        color: Color(0xFF111111))),
+                                if (branchName != null)
+                                  Text(branchName,
+                                      style: const TextStyle(fontSize: 10, color: Colors.grey),
+                                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                              ],
+                            ),
+                          ),
+                          if (store.hasBadge)
+                            Container(
+                              width: 9, height: 9,
+                              margin: const EdgeInsets.only(left: 4, top: 3),
+                              decoration: const BoxDecoration(
+                                  color: Color(0xFFE53935), shape: BoxShape.circle),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text('回饋 ${store.cashback}',
+                          style: const TextStyle(
+                              fontSize: 20, fontWeight: FontWeight.w900,
+                              color: Color(0xFF1A73E8))),
+                      const SizedBox(height: 6),
+                      ...store.conditions.map((c) => Padding(
+                            padding: const EdgeInsets.only(bottom: 3),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: Container(
+                                    width: 6, height: 6,
+                                    decoration: BoxDecoration(
                                       color: c.isRed
                                           ? const Color(0xFFE53935)
-                                          : const Color(0xFF333333),
-                                    )),
-                              ),
-                            ],
-                          ),
-                        )),
+                                          : const Color(0xFF444444),
+                                      shape: BoxShape.circle,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 5),
+                                Expanded(
+                                  child: Text(c.text,
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: c.isRed ? FontWeight.w600 : FontWeight.w400,
+                                        color: c.isRed
+                                            ? const Color(0xFFE53935)
+                                            : const Color(0xFF333333),
+                                      )),
+                                ),
+                              ],
+                            ),
+                          )),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+
+            const Divider(height: 14, thickness: 1, color: Color(0xFFF0F0F0)),
+
+            // ── 行動支付折扣優惠（從 discount_rules 資料庫）────────────────
+            if (bestDiscounts.isNotEmpty) ...[
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    const Icon(Icons.local_offer_outlined,
+                        size: 12, color: Color(0xFFE53935)),
+                    const SizedBox(width: 4),
+                    Text(
+                      '最佳行動支付優惠',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.grey[600],
+                      ),
+                    ),
                   ],
                 ),
               ),
+              ...bestDiscounts.take(3).map((rule) => _buildDiscountRow(rule)),
+              const Divider(height: 12, thickness: 1, color: Color(0xFFF0F0F0)),
             ],
-          ),
 
-          const Divider(height: 14, thickness: 1, color: Color(0xFFF0F0F0)),
-
-          // ─ 下半：行動支付小框（動態，來自 payMethodsNotifier） ──────────
-          ValueListenableBuilder<List<String>>(
-            valueListenable: payMethodsNotifier,
-            builder: (_, ids, __) {
-              if (ids.isEmpty) {
-                return GestureDetector(
-                  onTap: () {
-                    final root = context
-                        .findAncestorStateOfType<_RootScreenState>();
-                    root?.switchTab(1);
-                  },
-                  child: Text(
-                    '尚未設定行動支付 → 點此前往「會員」頁面選擇',
-                    style: TextStyle(fontSize: 10, color: Colors.blue[400]),
-                  ),
+            // ── 使用者選取的行動支付 chip ──────────────────────────────────
+            ValueListenableBuilder<List<String>>(
+              valueListenable: payMethodsNotifier,
+              builder: (_, ids, __) {
+                if (ids.isEmpty) {
+                  return GestureDetector(
+                    onTap: () {
+                      final root = context.findAncestorStateOfType<_RootScreenState>();
+                      root?.switchTab(1);
+                    },
+                    child: Text(
+                      '尚未設定行動支付 → 點此前往「會員」頁面選擇',
+                      style: TextStyle(fontSize: 10, color: Colors.blue[400]),
+                    ),
+                  );
+                }
+                final platforms = ids.map(_platformById).whereType<_PayPlatform>().toList();
+                return Wrap(
+                  spacing: 6,
+                  runSpacing: 5,
+                  children: platforms.map((p) => GestureDetector(
+                        onTap: () => _launchPayApp(p),
+                        child: _buildPayChip(p),
+                      )).toList(),
                 );
-              }
-              final platforms = ids
-                  .map(_platformById)
-                  .whereType<_PayPlatform>()
-                  .toList();
-              return Wrap(
-                spacing: 6,
-                runSpacing: 5,
-                children: platforms
-                    .map((p) => GestureDetector(
-                          onTap: () => _launchPayApp(p),
-                          child: _buildPayChip(p),
-                        ))
-                    .toList(),
-              );
-            },
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 折扣優惠列（來自 discount_rules）
+  Widget _buildDiscountRow(DiscountRule rule) {
+    final platformId = _discountSoftwareToId(rule.paymentSoftware);
+    final platform = platformId != null ? _platformById(platformId) : null;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 5),
+      child: Row(
+        children: [
+          // 平台色塊
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: platform?.color ?? Colors.grey,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              rule.paymentSoftware,
+              style: const TextStyle(
+                  fontSize: 8.5, fontWeight: FontWeight.w700, color: Colors.white),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              rule.ruleDesc,
+              style: const TextStyle(fontSize: 9.5, color: Color(0xFF333333)),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          // 折扣率標籤
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFF3E0),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: const Color(0xFFFFB300), width: 0.5),
+            ),
+            child: Text(
+              '${(rule.equivalentRate * 100).toStringAsFixed(0)}%折',
+              style: const TextStyle(
+                  fontSize: 8, fontWeight: FontWeight.w700, color: Color(0xFFE65100)),
+            ),
           ),
         ],
       ),
@@ -1095,13 +1375,9 @@ class _HomeTabState extends State<HomeTab> {
   Widget _buildPayTag(String label, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-      decoration: BoxDecoration(
-          color: color, borderRadius: BorderRadius.circular(5)),
+      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(5)),
       child: Text(label,
-          style: const TextStyle(
-              fontSize: 8.5,
-              fontWeight: FontWeight.w700,
-              color: Colors.white)),
+          style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.w700, color: Colors.white)),
     );
   }
 
@@ -1118,26 +1394,19 @@ class _HomeTabState extends State<HomeTab> {
         children: [
           Container(
             width: 14, height: 14,
-            decoration: BoxDecoration(
-                color: p.color, borderRadius: BorderRadius.circular(3)),
+            decoration: BoxDecoration(color: p.color, borderRadius: BorderRadius.circular(3)),
             child: Center(
               child: Text(p.iconText.replaceAll('\n', '')[0],
                   style: const TextStyle(
-                      fontSize: 7,
-                      fontWeight: FontWeight.w900,
-                      color: Colors.white)),
+                      fontSize: 7, fontWeight: FontWeight.w900, color: Colors.white)),
             ),
           ),
           const SizedBox(width: 4),
-          Text(p.label,
-              style: const TextStyle(
-                  fontSize: 9.5, color: Color(0xFF555555))),
+          Text(p.label, style: const TextStyle(fontSize: 9.5, color: Color(0xFF555555))),
         ],
       ),
     );
   }
-
-  // ── 會員 or 載具 pill ─────────────────────────────────────────────────────
 
   Widget _buildMemberPill(BuildContext context) {
     return ValueListenableBuilder<bool>(
@@ -1149,13 +1418,11 @@ class _HomeTabState extends State<HomeTab> {
             final isReady = carrierReady || memberMap.values.any((v) => v);
             return GestureDetector(
               onTap: () {
-                final root =
-                    context.findAncestorStateOfType<_RootScreenState>();
+                final root = context.findAncestorStateOfType<_RootScreenState>();
                 root?.switchTab(1);
               },
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 20, vertical: 10),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(30),
@@ -1165,27 +1432,22 @@ class _HomeTabState extends State<HomeTab> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (isReady)
-                      const Icon(Icons.check_circle,
-                          color: Color(0xFF43A047), size: 14)
+                      const Icon(Icons.check_circle, color: Color(0xFF43A047), size: 14)
                     else
                       const Text('未完善',
                           style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
+                              fontSize: 10, fontWeight: FontWeight.w700,
                               color: Color(0xFFE53935))),
                     const SizedBox(width: 10),
                     const Text('會員 or 載具',
-                        style: TextStyle(
-                            fontSize: 13, fontWeight: FontWeight.w700)),
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
                     const SizedBox(width: 10),
                     Row(
                       children: List.generate(3, (i) => Container(
                         width: 7, height: 7,
                         margin: const EdgeInsets.symmetric(horizontal: 2),
                         decoration: BoxDecoration(
-                          color: i == 0
-                              ? const Color(0xFF333333)
-                              : const Color(0xFFCCCCCC),
+                          color: i == 0 ? const Color(0xFF333333) : const Color(0xFFCCCCCC),
                           shape: BoxShape.circle,
                         ),
                       )),
@@ -1202,36 +1464,260 @@ class _HomeTabState extends State<HomeTab> {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// 支付條碼畫面（圖二）
+// 傾斜 Overlay 專用：會員條碼區塊（從 SharedPreferences 讀取）
 // ════════════════════════════════════════════════════════════════════════════
-//
-// ● 進入時亮度調到最大，離開還原
-// ● 傾斜手機（加速度 Y 軸 < -3）自動翻轉，讓店員角度正常
-// ● 音量下鍵 → 切到下一個推薦行動支付（非折扣型）
+
+class _TiltBarcodeSection extends StatefulWidget {
+  final String title;
+  final IconData icon;
+  final String prefKeyCode;
+  final String prefKeyType;
+
+  const _TiltBarcodeSection({
+    required this.title,
+    required this.icon,
+    required this.prefKeyCode,
+    required this.prefKeyType,
+  });
+
+  @override
+  State<_TiltBarcodeSection> createState() => _TiltBarcodeSectionState();
+}
+
+class _TiltBarcodeSectionState extends State<_TiltBarcodeSection> {
+  String? _code;
+  String _type = 'code128';
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final prefs = await SharedPreferences.getInstance();
+    // 嘗試通用 key
+    String? code = prefs.getString(widget.prefKeyCode);
+    String? type = prefs.getString(widget.prefKeyType);
+
+    // fallback：嘗試其他超商 key
+    if (code == null) {
+      for (final brand in ['全家便利商店', '7-ELEVEN', '萊爾富', 'OK便利商店', '_generic']) {
+        code = prefs.getString('member_barcode_$brand');
+        type = prefs.getString('member_type_$brand');
+        if (code != null) break;
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _code = code;
+      _type = type ?? 'code128';
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_code == null) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(widget.icon, color: Colors.grey.shade400, size: 16),
+            const SizedBox(width: 8),
+            Text('未設定${widget.title}',
+                style: TextStyle(fontSize: 13, color: Colors.grey.shade400)),
+          ],
+        ),
+      );
+    }
+
+    final isQR = _type == 'qrCode';
+    Barcode barcode;
+    switch (_type) {
+      case 'ean13':
+        barcode = Barcode.ean13();
+        break;
+      case 'qrCode':
+        barcode = Barcode.qrCode();
+        break;
+      default:
+        barcode = Barcode.code128();
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.04),
+              blurRadius: 8, offset: const Offset(0, 2))
+        ],
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(widget.icon, size: 14, color: Colors.grey.shade600),
+              const SizedBox(width: 4),
+              Text(widget.title,
+                  style: TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w600,
+                      color: Colors.grey.shade700)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (isQR)
+            Center(
+              child: BarcodeWidget(
+                barcode: barcode,
+                data: _code!,
+                width: 150,
+                height: 150,
+                drawText: false,
+              ),
+            )
+          else
+            LayoutBuilder(
+              builder: (ctx, constraints) => BarcodeWidget(
+                barcode: barcode,
+                data: _code!.trim().toUpperCase().replaceAll(RegExp(r'\s'), ''),
+                width: constraints.maxWidth,
+                height: 100,
+                drawText: false,
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+              ),
+            ),
+          const SizedBox(height: 8),
+          Text(_code!,
+              style: const TextStyle(
+                  fontFamily: 'monospace', fontSize: 12, letterSpacing: 1.5)),
+        ],
+      ),
+    );
+  }
+}
 
 // ════════════════════════════════════════════════════════════════════════════
-// 支付畫面（圖二）
+// 傾斜 Overlay 專用：載具條碼區塊
 // ════════════════════════════════════════════════════════════════════════════
-//
-// ● 進入時亮度最大，離開還原
-// ● 顯示目前選中的行動支付平台
-// ● 傾斜手機（加速度 Y < -3）畫面翻轉 180°（給店員看的角度）
-// ● 點擊「立即支付」→ deep link 跳到該 APP
-// ● 音量下鍵 → 循環切到下一個已啟用的平台 → 自動跳 APP
+
+class _TiltCarrierSection extends StatefulWidget {
+  const _TiltCarrierSection();
+
+  @override
+  State<_TiltCarrierSection> createState() => _TiltCarrierSectionState();
+}
+
+class _TiltCarrierSectionState extends State<_TiltCarrierSection> {
+  String? _code;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('carrier_code');
+    if (!mounted) return;
+    setState(() {
+      _code = raw?.trim().toUpperCase();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_code == null) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.receipt_long, color: Colors.grey.shade400, size: 16),
+            const SizedBox(width: 8),
+            Text('未設定電子載具',
+                style: TextStyle(fontSize: 13, color: Colors.grey.shade400)),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.04),
+              blurRadius: 8, offset: const Offset(0, 2))
+        ],
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.receipt_long, size: 14, color: Colors.grey.shade600),
+              const SizedBox(width: 4),
+              Text('電子載具',
+                  style: TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w600,
+                      color: Colors.grey.shade700)),
+            ],
+          ),
+          const SizedBox(height: 12),
+          LayoutBuilder(
+            builder: (ctx, constraints) => BarcodeWidget(
+              barcode: Barcode.code128(),
+              data: _code!,
+              width: constraints.maxWidth,
+              height: 100,
+              drawText: false,
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(_code!,
+              style: const TextStyle(
+                  fontFamily: 'monospace', fontSize: 14,
+                  letterSpacing: 2, fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 支付條碼畫面
+// ════════════════════════════════════════════════════════════════════════════
 
 class PaymentBarcodeScreen extends StatefulWidget {
-  final String platformId; // _PayPlatform.id
-
+  final String platformId;
   const PaymentBarcodeScreen({super.key, required this.platformId});
 
   @override
-  State<PaymentBarcodeScreen> createState() =>
-      _PaymentBarcodeScreenState();
+  State<PaymentBarcodeScreen> createState() => _PaymentBarcodeScreenState();
 }
 
 class _PaymentBarcodeScreenState extends State<PaymentBarcodeScreen> {
   static const _volumeChannel = MethodChannel('com.example.hi/volume');
-
   double _originalBrightness = 0.5;
   bool _isFlipped = false;
   StreamSubscription? _accelSub;
@@ -1240,8 +1726,17 @@ class _PaymentBarcodeScreenState extends State<PaymentBarcodeScreen> {
   void initState() {
     super.initState();
     _setBrightness();
-    _listenVolume();
-    _listenAccelerometer();
+    _volumeChannel.setMethodCallHandler((call) async {
+      if (call.method == 'volumeDown' && mounted) _switchToNext();
+    });
+    _accelSub = accelerometerEventStream(
+      samplingPeriod: SensorInterval.normalInterval,
+    ).listen((event) {
+      final shouldFlip = event.y < -3;
+      if (shouldFlip != _isFlipped && mounted) {
+        setState(() => _isFlipped = shouldFlip);
+      }
+    });
   }
 
   Future<void> _setBrightness() async {
@@ -1253,13 +1748,6 @@ class _PaymentBarcodeScreenState extends State<PaymentBarcodeScreen> {
     }
   }
 
-  void _listenVolume() {
-    _volumeChannel.setMethodCallHandler((call) async {
-      if (call.method == 'volumeDown' && mounted) _switchToNext();
-    });
-  }
-
-  // 音量下鍵：切換到下一個平台並直接開啟 APP
   void _switchToNext() {
     final ids = payMethodsNotifier.value;
     if (ids.isEmpty) return;
@@ -1267,8 +1755,6 @@ class _PaymentBarcodeScreenState extends State<PaymentBarcodeScreen> {
     final nextId = ids[(idx + 1) % ids.length];
     final next = _platformById(nextId);
     if (next == null) return;
-
-    // 先替換畫面，再跳 APP
     Navigator.pushReplacement(context, MaterialPageRoute(
       builder: (_) => PaymentBarcodeScreen(platformId: nextId),
       fullscreenDialog: true,
@@ -1276,30 +1762,16 @@ class _PaymentBarcodeScreenState extends State<PaymentBarcodeScreen> {
     _launchApp(next);
   }
 
-  void _listenAccelerometer() {
-    _accelSub = accelerometerEventStream(
-      samplingPeriod: SensorInterval.normalInterval,
-    ).listen((event) {
-      final shouldFlip = event.y < -3;
-      if (shouldFlip != _isFlipped && mounted) {
-        setState(() => _isFlipped = shouldFlip);
-      }
-    });
-  }
-
   @override
   void dispose() {
     _accelSub?.cancel();
-    ScreenBrightness()
-        .setScreenBrightness(_originalBrightness)
-        .catchError((_) {});
+    ScreenBrightness().setScreenBrightness(_originalBrightness).catchError((_) {});
+    // 重新綁定首頁音量鍵（這裡無法直接操作，由 HomeTab 自行設定）
     super.dispose();
   }
 
   Future<void> _launchApp(_PayPlatform platform) async {
-    final scheme =
-        Platform.isIOS ? platform.iosScheme : platform.androidScheme;
-
+    final scheme = Platform.isIOS ? platform.iosScheme : platform.androidScheme;
     if (scheme != null) {
       final uri = Uri.parse(scheme);
       if (await canLaunchUrl(uri)) {
@@ -1352,41 +1824,28 @@ class _PaymentBarcodeScreenState extends State<PaymentBarcodeScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // 平台色塊 LOGO
                 Container(
                   width: 120, height: 120,
                   decoration: BoxDecoration(
                     color: platform.color,
                     borderRadius: BorderRadius.circular(28),
                     boxShadow: [
-                      BoxShadow(
-                        color: platform.color.withOpacity(0.35),
-                        blurRadius: 20,
-                        offset: const Offset(0, 8),
-                      ),
+                      BoxShadow(color: platform.color.withOpacity(0.35),
+                          blurRadius: 20, offset: const Offset(0, 8)),
                     ],
                   ),
                   child: Center(
-                    child: Text(
-                      platform.iconText,
-                      style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w900,
-                          color: Colors.white,
-                          height: 1.3),
-                      textAlign: TextAlign.center,
-                    ),
+                    child: Text(platform.iconText,
+                        style: const TextStyle(
+                            fontSize: 20, fontWeight: FontWeight.w900,
+                            color: Colors.white, height: 1.3),
+                        textAlign: TextAlign.center),
                   ),
                 ),
-
                 const SizedBox(height: 28),
-
                 Text(platform.label,
-                    style: const TextStyle(
-                        fontSize: 22, fontWeight: FontWeight.w800)),
-
+                    style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
                 const SizedBox(height: 8),
-
                 Text(
                   platform.universalUrl != null
                       ? '點擊下方按鈕開啟 ${platform.label} APP 進行支付'
@@ -1394,10 +1853,7 @@ class _PaymentBarcodeScreenState extends State<PaymentBarcodeScreen> {
                   style: TextStyle(fontSize: 13, color: Colors.grey[600]),
                   textAlign: TextAlign.center,
                 ),
-
                 const SizedBox(height: 36),
-
-                // 立即支付按鈕
                 if (platform.iosScheme != null ||
                     platform.androidScheme != null ||
                     platform.universalUrl != null)
@@ -1417,25 +1873,19 @@ class _PaymentBarcodeScreenState extends State<PaymentBarcodeScreen> {
                       ),
                     ),
                   ),
-
                 const SizedBox(height: 36),
-
-                // 提示列
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.screen_rotation,
-                        size: 13, color: Colors.grey[400]),
+                    Icon(Icons.screen_rotation, size: 13, color: Colors.grey[400]),
                     const SizedBox(width: 4),
                     Text('傾斜手機，畫面自動翻轉給店員看',
-                        style: TextStyle(
-                            fontSize: 11, color: Colors.grey[400])),
+                        style: TextStyle(fontSize: 11, color: Colors.grey[400])),
                   ],
                 ),
                 const SizedBox(height: 6),
                 Text('音量↓ 切換下一個行動支付並開啟',
-                    style: TextStyle(
-                        fontSize: 11, color: Colors.grey[350])),
+                    style: TextStyle(fontSize: 11, color: Colors.grey[350])),
               ],
             ),
           ),
@@ -1479,37 +1929,25 @@ class _StorePickerSheet extends StatelessWidget {
               width: 40, height: 4,
               margin: const EdgeInsets.only(bottom: 16),
               decoration: BoxDecoration(
-                  color: cs.outlineVariant,
-                  borderRadius: BorderRadius.circular(2)),
+                  color: cs.outlineVariant, borderRadius: BorderRadius.circular(2)),
             ),
           ),
           Text('選擇店家',
-              style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w600,
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600,
                   color: cs.onSurface)),
           const SizedBox(height: 4),
           Text('選擇後將顯示對應的會員/支付條碼',
-              style: TextStyle(
-                  fontSize: 13,
-                  color: cs.onSurface.withOpacity(0.5))),
+              style: TextStyle(fontSize: 13, color: cs.onSurface.withOpacity(0.5))),
           const SizedBox(height: 16),
           ...stores.map((s) {
             final selected = selectedStore?['fullName'] == s['fullName'];
             return ListTile(
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               leading: Icon(Icons.store,
-                  color: selected
-                      ? Colors.blue
-                      : cs.onSurface.withOpacity(0.5)),
-              title: Text(s['name']!,
-                  style: const TextStyle(fontWeight: FontWeight.w500)),
-              subtitle: Text(s['fullName']!,
-                  style: const TextStyle(fontSize: 11)),
-              trailing: selected
-                  ? const Icon(Icons.check_circle, color: Colors.blue)
-                  : null,
+                  color: selected ? Colors.blue : cs.onSurface.withOpacity(0.5)),
+              title: Text(s['name']!, style: const TextStyle(fontWeight: FontWeight.w500)),
+              subtitle: Text(s['fullName']!, style: const TextStyle(fontSize: 11)),
+              trailing: selected ? const Icon(Icons.check_circle, color: Colors.blue) : null,
               onTap: () => onSelected(s),
             );
           }),
@@ -1532,6 +1970,7 @@ class MemberTab extends StatefulWidget {
 
 class _MemberTabState extends State<MemberTab> {
 
+  // ✅ 改為持久化：toggle 後立即存檔
   void _togglePlatform(String id) {
     final current = List<String>.from(payMethodsNotifier.value);
     if (current.contains(id)) {
@@ -1540,14 +1979,17 @@ class _MemberTabState extends State<MemberTab> {
       current.add(id);
     }
     payMethodsNotifier.value = current;
+    savePayMethods(current); // ✅ 持久化
   }
 
+  // ✅ 改為持久化：拖曳排序後立即存檔
   void _movePlatform(int oldIdx, int newIdx) {
     final current = List<String>.from(payMethodsNotifier.value);
     if (newIdx > oldIdx) newIdx--;
     final item = current.removeAt(oldIdx);
     current.insert(newIdx, item);
     payMethodsNotifier.value = current;
+    savePayMethods(current); // ✅ 持久化
   }
 
   @override
@@ -1566,8 +2008,6 @@ class _MemberTabState extends State<MemberTab> {
 
           // ── 行動支付 ──────────────────────────────────────────────────────
           _sectionLabel('行動支付'),
-
-          // 說明文字
           Padding(
             padding: const EdgeInsets.only(left: 4, bottom: 10),
             child: Text(
@@ -1576,7 +2016,6 @@ class _MemberTabState extends State<MemberTab> {
             ),
           ),
 
-          // 固定平台清單（勾選 + 排序）
           ValueListenableBuilder<List<String>>(
             valueListenable: payMethodsNotifier,
             builder: (_, enabledIds, __) {
@@ -1585,17 +2024,14 @@ class _MemberTabState extends State<MemberTab> {
                 borderRadius: BorderRadius.circular(16),
                 child: Column(
                   children: [
-                    // 已啟用的（可拖排）
                     if (enabledIds.isNotEmpty) ...[
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                         child: Row(children: [
-                          const Icon(Icons.drag_indicator,
-                              size: 14, color: Colors.grey),
+                          const Icon(Icons.drag_indicator, size: 14, color: Colors.grey),
                           const SizedBox(width: 4),
                           Text('已選擇（長按拖曳排序）',
-                              style: TextStyle(
-                                  fontSize: 11, color: Colors.grey[500])),
+                              style: TextStyle(fontSize: 11, color: Colors.grey[500])),
                         ]),
                       ),
                       ReorderableListView(
@@ -1621,7 +2057,6 @@ class _MemberTabState extends State<MemberTab> {
                         const Divider(height: 1, indent: 16, endIndent: 16),
                     ],
 
-                    // 未啟用的平台
                     ..._kPayPlatforms
                         .where((p) => !enabledIds.contains(p.id))
                         .toList()
@@ -1676,18 +2111,14 @@ class _MemberTabState extends State<MemberTab> {
                           title: Text(displayName,
                               style: const TextStyle(fontWeight: FontWeight.w600)),
                           trailing: isSetup
-                              ? const Icon(Icons.check_circle,
-                                  color: Color(0xFF43A047))
-                              : const Icon(Icons.chevron_right,
-                                  color: Colors.grey),
+                              ? const Icon(Icons.check_circle, color: Color(0xFF43A047))
+                              : const Icon(Icons.chevron_right, color: Colors.grey),
                           onTap: () async {
                             await Navigator.push(context,
                                 MaterialPageRoute(
-                                    builder: (_) =>
-                                        MemberBarcodeScreen(brandName: brandName),
+                                    builder: (_) => MemberBarcodeScreen(brandName: brandName),
                                     fullscreenDialog: true));
-                            final updated = Map<String, bool>.from(
-                                memberSetupNotifier.value);
+                            final updated = Map<String, bool>.from(memberSetupNotifier.value);
                             updated[id] = true;
                             memberSetupNotifier.value = updated;
                           },
@@ -1712,10 +2143,8 @@ class _MemberTabState extends State<MemberTab> {
                   padding: const EdgeInsets.only(left: 4, bottom: 10),
                   child: Text('電子載具',
                       style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.grey[500],
-                          letterSpacing: 0.5)),
+                          fontSize: 13, fontWeight: FontWeight.w600,
+                          color: Colors.grey[500], letterSpacing: 0.5)),
                 ),
               ),
               IconButton(
@@ -1740,8 +2169,7 @@ class _MemberTabState extends State<MemberTab> {
               title: '電子載具（手機條碼）',
               subtitle: isSetup ? '已設定 ✓' : '點擊設定 /XXXXXXX',
               statusIcon: isSetup
-                  ? const Icon(Icons.check_circle,
-                      color: Color(0xFF43A047), size: 20)
+                  ? const Icon(Icons.check_circle, color: Color(0xFF43A047), size: 20)
                   : null,
               onTap: () async {
                 await Navigator.push(context,
@@ -1795,8 +2223,7 @@ class _MemberTabState extends State<MemberTab> {
               child: Text(
                 platform.iconText.replaceAll('\n', ' ').trim()[0],
                 style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w900,
+                  fontSize: 15, fontWeight: FontWeight.w900,
                   color: enabled ? Colors.white : Colors.grey[400],
                 ),
               ),
@@ -1814,21 +2241,17 @@ class _MemberTabState extends State<MemberTab> {
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // 勾選/取消
               Switch.adaptive(
                 value: enabled,
                 onChanged: (_) => _togglePlatform(platform.id),
                 activeColor: platform.color,
               ),
-              // 啟用的可以直接測試跳轉
               if (enabled)
                 IconButton(
-                  icon: Icon(Icons.open_in_new,
-                      size: 18, color: Colors.grey[500]),
+                  icon: Icon(Icons.open_in_new, size: 18, color: Colors.grey[500]),
                   onPressed: () => Navigator.push(context,
                       MaterialPageRoute(
-                          builder: (_) => PaymentBarcodeScreen(
-                              platformId: platform.id),
+                          builder: (_) => PaymentBarcodeScreen(platformId: platform.id),
                           fullscreenDialog: true)),
                   tooltip: '測試開啟',
                 ),
@@ -1845,10 +2268,8 @@ class _MemberTabState extends State<MemberTab> {
         padding: const EdgeInsets.only(left: 4, bottom: 10),
         child: Text(label,
             style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey[500],
-                letterSpacing: 0.5)),
+                fontSize: 13, fontWeight: FontWeight.w600,
+                color: Colors.grey[500], letterSpacing: 0.5)),
       );
 }
 
@@ -1876,10 +2297,8 @@ class SettingsTab extends StatelessWidget {
             padding: const EdgeInsets.only(left: 4, bottom: 10),
             child: Text('一般',
                 style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey[500],
-                    letterSpacing: 0.5)),
+                    fontSize: 13, fontWeight: FontWeight.w600,
+                    color: Colors.grey[500], letterSpacing: 0.5)),
           ),
           _EntryCard(
             icon: Icons.info_outline,
@@ -1946,17 +2365,14 @@ class _EntryCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(title,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w600, fontSize: 15)),
+                        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
                     const SizedBox(height: 2),
                     Text(subtitle,
-                        style: TextStyle(
-                            fontSize: 12, color: Colors.grey[500])),
+                        style: TextStyle(fontSize: 12, color: Colors.grey[500])),
                   ],
                 ),
               ),
-              statusIcon ??
-                  const Icon(Icons.chevron_right, color: Colors.grey),
+              statusIcon ?? const Icon(Icons.chevron_right, color: Colors.grey),
             ],
           ),
         ),
