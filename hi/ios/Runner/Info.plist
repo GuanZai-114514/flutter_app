@@ -27,21 +27,33 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 
-	<!-- 定位權限設定開始 -->
+	<!-- 行動支付 Deep Link Scheme 白名單 -->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>linepay</string>
+		<string>jkos</string>
+		<string>fampay</string>
+		<string>twpay</string>
+		<string>easycard</string>
+		<string>icashpay</string>
+		<string>pxpay</string>
+		<string>googlepay</string>
+		<string>samsungpay</string>
+	</array>
+
+	<!-- 定位權限設定 -->
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>我們需要您的定位權限，以便在結帳時精確匹配當前店家並提供正確的支付建議。</string>
 	<key>NSLocationAlwaysUsageDescription</key>
 	<string>我們需要您的定位權限，以便在結帳時精確匹配當前店家並提供正確的支付建議。</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>我們需要您的定位權限，以便在結帳時精確匹配當前店家並提供正確的支付建議。</string>
-	<!-- 定位權限設定結束 -->
 
-	<!-- 相機與相簿權限設定開始 -->
+	<!-- 相機與相簿權限 -->
 	<key>NSCameraUsageDescription</key>
 	<string>掃描會員條碼需要使用相機</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>從相簿選取條碼圖片需要存取權限</string>
-	<!-- 相機與相簿權限設定結束 -->
 
 	<key>UIApplicationSceneManifest</key>
 	<dict>
@@ -66,7 +78,7 @@
 	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
-	<key>UILlaunchStoryboardName</key>
+	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
 	<string>Main</string>
