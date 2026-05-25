@@ -164,9 +164,6 @@ const _kPayPlatforms = <_PayPlatform>[
   ),
 ];
 
-// 使用者已啟用的平台 ID 清單（跨 Tab 同步）
-final payMethodsNotifier = ValueNotifier<List<String>>([]);
-
 // 把 ID 轉換回平台定義
 _PayPlatform? _platformById(String id) {
   try {
