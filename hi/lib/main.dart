@@ -37,19 +37,14 @@ void main() async {
 // 全局共享狀態（ValueNotifier 跨 Tab 同步）
 // ════════════════════════════════════════════════════════════════════════════
 
-// 行動支付清單（會員Tab 新增/刪除 → 首頁卡片即時更新）
-// ⚠️ 改為持久化：啟動時從 SharedPreferences 載入
 final payMethodsNotifier = ValueNotifier<List<String>>([]);
 
-// 各超商會員是否已設定
 final memberSetupNotifier = ValueNotifier<Map<String, bool>>({
   'fm': false, 'seven': false, 'hilife': false, 'ok': false,
 });
 
-// 載具是否已設定
 final carrierSetupNotifier = ValueNotifier<bool>(false);
 
-// ── 行動支付持久化 key ────────────────────────────────────────────────────
 const _kPayMethodsPrefKey = 'pay_methods_list';
 
 Future<void> loadPayMethods() async {
@@ -64,17 +59,17 @@ Future<void> savePayMethods(List<String> ids) async {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// 折扣規則（對應 discount_rules.sql）
+// 折扣規則
 // ════════════════════════════════════════════════════════════════════════════
 
 class DiscountRule {
   final int id;
-  final String paymentSoftware; // 行動支付平台名稱
+  final String paymentSoftware;
   final String paymentMethod;
   final String userLevel;
   final double discountAmount;
   final double minSpend;
-  final double equivalentRate; // 折扣率，越高越優惠
+  final double equivalentRate;
   final bool isSpecial;
   final String startDate;
   final String endDate;
@@ -113,7 +108,7 @@ class DiscountRule {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// 行動支付平台定義（固定清單，含 deep link / universal link）
+// 行動支付平台定義
 // ════════════════════════════════════════════════════════════════════════════
 
 class _PayPlatform {
@@ -205,7 +200,6 @@ _PayPlatform? _platformById(String id) {
   }
 }
 
-// ── discount_rules 的 payment_software 對映到 _PayPlatform.id ────────────
 String? _discountSoftwareToId(String software) {
   const map = {
     '悠遊付': 'easycard',
@@ -340,7 +334,6 @@ class _RootScreenState extends State<RootScreen> {
   @override
   void initState() {
     super.initState();
-    // ✅ 啟動時載入持久化的行動支付清單
     loadPayMethods();
     WidgetsBinding.instance.addPostFrameCallback((_) => _initDatabase());
   }
@@ -459,7 +452,6 @@ class HomeTab extends StatefulWidget {
 
 class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
   static const String _apiKey = 'AIzaSyAly-Vst9UhgyUmQTKFdaCtwNEbNBIzQu4';
-  static const _volumeChannel = MethodChannel('com.example.hi/volume');
 
   List<Map<String, String>> _displayList = [];
   bool _isLoading = false;
@@ -470,13 +462,10 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
 
   // ── 傾斜偵測 ─────────────────────────────────────────────────────────────
   StreamSubscription? _accelSub;
-  // true = 手機向前傾（給店員看），顯示條碼 overlay
   bool _isTilted = false;
-  // 防抖：避免加速度計抖動反覆觸發
   DateTime? _lastTiltChange;
 
   // ── 折扣規則 ─────────────────────────────────────────────────────────────
-  // 從 DB 讀取後暫存，key = storeId
   Map<int, List<DiscountRule>> _discountsByStore = {};
 
   @override
@@ -487,7 +476,6 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
       _updatePermissionMessage();
       _loadDiscountRules();
     });
-    _volumeChannel.setMethodCallHandler(_handleVolumeMethodCall);
     _startAccelerometer();
   }
 
@@ -498,18 +486,16 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  // ── 加速度計：傾斜偵測（僅首頁使用） ────────────────────────────────────
+  // ── 加速度計 ──────────────────────────────────────────────────────────────
   void _startAccelerometer() {
     _accelSub = accelerometerEventStream(
       samplingPeriod: SensorInterval.normalInterval,
     ).listen((event) {
-      // Y 軸 < -3 表示螢幕面朝店員（手機向前傾），> -1.5 表示收回
       final shouldTilt = event.y < -3.0;
       final shouldUntilt = event.y > -1.5;
 
       if (shouldTilt == _isTilted) return;
 
-      // 防抖 300ms
       final now = DateTime.now();
       if (_lastTiltChange != null &&
           now.difference(_lastTiltChange!).inMilliseconds < 300) return;
@@ -523,14 +509,13 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
     });
   }
 
-  // ── 折扣規則載入（從 sqflite DB 讀取 discount_rules + rule_store_map） ──
+  // ── 折扣規則載入 ──────────────────────────────────────────────────────────
   Future<void> _loadDiscountRules() async {
     try {
       final dbPath = p.join(await getDatabasesPath(), 'pay_helper.db');
       if (!await databaseExists(dbPath)) return;
       final db = await openDatabase(dbPath, readOnly: true);
 
-      // 確認 discount_rules 表存在
       final tables = await db.rawQuery(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='discount_rules'",
       );
@@ -539,17 +524,14 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
         return;
       }
 
-      // 取得折扣規則
       final discountRows = await db.query('discount_rules');
       final rules = discountRows.map(DiscountRule.fromMap).toList();
 
-      // 取得 rule_store_map（type = 'discount'）
       final mapRows = await db.rawQuery(
         "SELECT rule_id, store_id FROM rule_store_map WHERE rule_type = 'discount'",
       );
       await db.close();
 
-      // 建立 storeId → [DiscountRule] 的映射
       final Map<int, List<DiscountRule>> byStore = {};
       for (final row in mapRows) {
         final ruleId = (row['rule_id'] as num).toInt();
@@ -566,8 +548,6 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
     }
   }
 
-  // ── 取得當前超商的最佳折扣行動支付 ──────────────────────────────────────
-  // storeId: 1=全家, 2=7-11, 3=萊爾富, 4=OK（對應 rule_store_map）
   int _storeIdFromActiveStore() {
     switch (_activeStoreId) {
       case 'fm':     return 1;
@@ -578,11 +558,9 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
     }
   }
 
-  /// 回傳當前超商中，依 equivalentRate 排序的最佳折扣規則清單
   List<DiscountRule> _getBestDiscounts() {
     final storeId = _storeIdFromActiveStore();
     final rules = _discountsByStore[storeId] ?? [];
-    // 依 equivalentRate 降冪排序，同率再依 discountAmount 降冪
     final sorted = List<DiscountRule>.from(rules)
       ..sort((a, b) {
         final rateCmp = b.equivalentRate.compareTo(a.equivalentRate);
@@ -590,36 +568,6 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
         return b.discountAmount.compareTo(a.discountAmount);
       });
     return sorted;
-  }
-
-  /// 最優惠的行動支付平台（用於音量鍵跳轉）
-  _PayPlatform? _getBestPayPlatform() {
-    final discounts = _getBestDiscounts();
-    for (final rule in discounts) {
-      final id = _discountSoftwareToId(rule.paymentSoftware);
-      if (id != null) {
-        final platform = _platformById(id);
-        if (platform != null) return platform;
-      }
-    }
-    // fallback：使用者設定的第一個
-    final ids = payMethodsNotifier.value;
-    if (ids.isNotEmpty) return _platformById(ids.first);
-    return null;
-  }
-
-  // ── 音量鍵處理（僅首頁） ─────────────────────────────────────────────────
-  Future<dynamic> _handleVolumeMethodCall(MethodCall call) async {
-    if (call.method == 'volumeDown' && mounted) {
-      final best = _getBestPayPlatform();
-      if (best != null) {
-        await _launchPayApp(best);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('尚未設定行動支付，請至「會員」頁面選擇')),
-        );
-      }
-    }
   }
 
   // ── 開啟行動支付 APP ──────────────────────────────────────────────────────
@@ -779,32 +727,6 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _showStorePickerSheet() async {
-    if (_displayList.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('請先按「開始定位」偵測附近店家')),
-      );
-      return;
-    }
-    await showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (ctx) => _StorePickerSheet(
-        stores: _displayList,
-        selectedStore: _selectedStore,
-        onSelected: (store) {
-          final id = _matchStoreId(store['name']!);
-          setState(() {
-            _selectedStore = store;
-            if (id != null) _activeStoreId = id;
-          });
-          Navigator.of(ctx).pop();
-        },
-      ),
-    );
-  }
-
   String? _matchStoreId(String name) {
     final n = name.replaceAll(' ', '').toLowerCase();
     if (n.contains('全家') || n.contains('familymart')) return 'fm';
@@ -815,7 +737,7 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
   }
 
   // ════════════════════════════════════════════════════════════════════════
-  // UI
+  // UI Build
   // ════════════════════════════════════════════════════════════════════════
 
   @override
@@ -823,157 +745,59 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
     return Scaffold(
       backgroundColor: const Color(0xFFF2F2F7),
       appBar: AppBar(
-        title: const Text('首頁', style: TextStyle(fontWeight: FontWeight.bold)),
-        centerTitle: true,
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
+        title: const Text('發現',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 24)),
+        centerTitle: false,
+        backgroundColor: const Color(0xFFF2F2F7),
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
         actions: [
           IconButton(
             onPressed: _requestPermission,
-            icon: const Icon(Icons.location_on_outlined),
+            icon: const Icon(Icons.search, size: 24),
             tooltip: '定位權限',
           ),
+          const SizedBox(width: 4),
         ],
       ),
       body: Stack(
         children: [
-          // ── 主要內容 ────────────────────────────────────────────────────
-          Column(
-            children: [
-              if (_permissionMessage.isNotEmpty)
-                Material(
-                  color: Colors.orange.shade50,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 18),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(_permissionMessage,
-                              style: const TextStyle(fontSize: 12, color: Colors.orange)),
-                        ),
-                      ],
-                    ),
-                  ),
+          if (_permissionMessage.isNotEmpty)
+            Positioned(
+              top: 0, left: 0, right: 0,
+              child: Material(
+                color: Colors.orange.shade50,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Row(children: [
+                    const Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 16),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(_permissionMessage,
+                        style: const TextStyle(fontSize: 11, color: Colors.orange))),
+                  ]),
                 ),
-              Expanded(
-                child: !widget.dbReady
-                    ? const Center(child: CircularProgressIndicator.adaptive())
-                    : _buildMainLayout(context),
               ),
-            ],
-          ),
-
-          // ── 傾斜時疊加條碼 Overlay（旋轉 180° 給店員看） ──────────────────
+            ),
+          !widget.dbReady
+              ? const Center(child: CircularProgressIndicator.adaptive())
+              : _buildMainLayout(context),
           if (_isTilted) _buildTiltOverlay(context),
         ],
       ),
     );
   }
 
-  // ════════════════════════════════════════════════════════════════════════
-  // 傾斜時的全螢幕條碼 Overlay
-  // ════════════════════════════════════════════════════════════════════════
-
-  Widget _buildTiltOverlay(BuildContext context) {
-    return AnimatedOpacity(
-      opacity: _isTilted ? 1.0 : 0.0,
-      duration: const Duration(milliseconds: 250),
-      child: Container(
-        color: Colors.white,
-        child: SafeArea(
-          child: RotatedBox(
-            // 180° 旋轉，讓店員可以正向閱讀
-            quarterTurns: 2,
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // ── 店員提示標頭 ───────────────────────────────────────
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.shade50,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.blue.shade200),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.barcode_reader, color: Colors.blue.shade700, size: 18),
-                        const SizedBox(width: 8),
-                        Text(
-                          '請掃描以下條碼',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.blue.shade800,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 24),
-
-                  // ── 會員條碼區塊 ──────────────────────────────────────
-                  _TiltBarcodeSection(
-                    title: '會員條碼',
-                    icon: Icons.person_outline,
-                    prefKeyCode: 'member_barcode_${_kStores[_activeStoreId]?.name ?? "_generic"}',
-                    prefKeyType: 'member_type_${_kStores[_activeStoreId]?.name ?? "_generic"}',
-                  ),
-
-                  const SizedBox(height: 20),
-
-                  // ── 載具條碼區塊 ──────────────────────────────────────
-                  const _TiltCarrierSection(),
-
-                  const SizedBox(height: 20),
-
-                  // ── 收回提示 ─────────────────────────────────────────
-                  Text(
-                    '將手機收回即可返回首頁',
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ════════════════════════════════════════════════════════════════════════
-  // 主佈局（與原版相同，加入折扣資訊）
-  // ════════════════════════════════════════════════════════════════════════
-
+  // ── 主佈局 ──────────────────────────────────────────────────────────────
   Widget _buildMainLayout(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _buildStoreCircle('fm'),
-              _buildStoreCircle('seven'),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Expanded(child: _buildInfoCard()),
-          const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              _buildStoreCircle('hilife'),
-              _buildLocateButton(),
-              _buildStoreCircle('ok'),
-            ],
-          ),
+          _buildStoreRow(),
+          const SizedBox(height: 16),
+          _buildInfoCard(),
           const SizedBox(height: 12),
           _buildMemberPill(context),
         ],
@@ -981,47 +805,20 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildLocateButton() {
-    return GestureDetector(
-      onTap: _isLoading ? null : _startDetection,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        width: 72,
-        height: 72,
-        decoration: BoxDecoration(
-          color: _isLoading ? const Color(0xFF388E3C) : const Color(0xFF1A73E8),
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 3),
-          boxShadow: [
-            BoxShadow(
-              color: (_isLoading ? Colors.green : Colors.blue).withOpacity(0.3),
-              blurRadius: 8,
-              offset: const Offset(0, 3),
-            ),
-          ],
-        ),
-        child: _isLoading
-            ? const Center(
-                child: SizedBox(
-                  width: 24, height: 24,
-                  child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
-                ),
-              )
-            : const Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.my_location, color: Colors.white, size: 22),
-                  SizedBox(height: 2),
-                  Text('開始定位',
-                      style: TextStyle(
-                          fontSize: 8, fontWeight: FontWeight.w700, color: Colors.white)),
-                ],
-              ),
-      ),
+  // ── 頂部超商圖示列 ───────────────────────────────────────────────────────
+  Widget _buildStoreRow() {
+    const storeOrder = ['fm', 'hilife', 'ok', 'seven'];
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        ...storeOrder.map((id) => _buildStoreAvatar(id)),
+        _buildLocateButton(),
+      ],
     );
   }
 
-  Widget _buildStoreCircle(String id) {
+  // ── 超商圓形頭像 ─────────────────────────────────────────────────────────
+  Widget _buildStoreAvatar(String id) {
     final info = _kStores[id]!;
     final isActive = _activeStoreId == id;
 
@@ -1031,17 +828,13 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
         final matched = _displayList
             .where((m) => _matchStoreId(m['name']!) == id)
             .toList();
-        if (matched.isNotEmpty) {
-          setState(() => _selectedStore = matched.first);
-        }
+        if (matched.isNotEmpty) setState(() => _selectedStore = matched.first);
       },
-      child: Stack(
-        clipBehavior: Clip.none,
+      child: Column(
         children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            width: 72,
-            height: 72,
+          Container(
+            width: 60,
+            height: 60,
             decoration: BoxDecoration(
               color: Colors.white,
               shape: BoxShape.circle,
@@ -1052,42 +845,458 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
               boxShadow: isActive
                   ? [BoxShadow(
                       color: info.primaryColor.withOpacity(0.2),
-                      blurRadius: 8, offset: const Offset(0, 2))]
-                  : null,
+                      blurRadius: 10, offset: const Offset(0, 3))]
+                  : [const BoxShadow(
+                      color: Color(0x10000000),
+                      blurRadius: 4, offset: Offset(0, 1))],
             ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _buildStoreLogo(id),
-                const SizedBox(height: 3),
-                Text(
-                  info.shortName,
-                  style: TextStyle(
-                    fontSize: 9,
-                    fontWeight: FontWeight.w700,
-                    color: isActive ? info.primaryColor : Colors.grey[600],
-                  ),
-                ),
-              ],
+            child: ClipOval(child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: _buildStoreLogo(id),
+            )),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            info.shortName,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
+              color: isActive ? info.primaryColor : const Color(0xFF888888),
             ),
           ),
-          if (info.hasBadge)
-            Positioned(
-              top: 2, right: 2,
-              child: Container(
-                width: 14, height: 14,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE53935),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white, width: 1.5),
-                ),
-              ),
-            ),
         ],
       ),
     );
   }
 
+  // ── 定位按鈕 ─────────────────────────────────────────────────────────────
+  Widget _buildLocateButton() {
+    return GestureDetector(
+      onTap: _isLoading ? null : _startDetection,
+      child: Column(
+        children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            width: 60,
+            height: 60,
+            decoration: BoxDecoration(
+              color: _isLoading ? const Color(0xFF388E3C) : const Color(0xFF1A73E8),
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: (_isLoading ? Colors.green : Colors.blue).withOpacity(0.25),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            child: _isLoading
+                ? const Center(child: SizedBox(
+                    width: 22, height: 22,
+                    child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white)))
+                : const Icon(Icons.my_location, color: Colors.white, size: 24),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            _isLoading ? '定位中' : '開始定位',
+            style: const TextStyle(
+                fontSize: 10, fontWeight: FontWeight.w500, color: Color(0xFF888888)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── 中央資訊卡 ───────────────────────────────────────────────────────────
+  Widget _buildInfoCard() {
+    final store = _kStores[_activeStoreId]!;
+    final branchName = (_selectedStore != null &&
+            _matchStoreId(_selectedStore!['name']!) == _activeStoreId)
+        ? _selectedStore!['fullName']
+        : null;
+
+    final bestDiscounts = _getBestDiscounts();
+    final topDiscount = bestDiscounts.isNotEmpty ? bestDiscounts.first : null;
+    final otherDiscounts =
+        bestDiscounts.length > 1 ? bestDiscounts.skip(1).toList() : <DiscountRule>[];
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: const [
+          BoxShadow(color: Color(0x08000000), blurRadius: 12, offset: Offset(0, 2)),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+
+          // ── 店名列 ─────────────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+            child: Row(
+              children: [
+                SizedBox(width: 48, height: 48, child: _buildStoreLogo(_activeStoreId)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        branchName ?? store.name,
+                        style: const TextStyle(
+                            fontSize: 17, fontWeight: FontWeight.w700,
+                            color: Color(0xFF111111)),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (branchName != null)
+                        Text(store.name,
+                            style: const TextStyle(
+                                fontSize: 11, color: Color(0xFF888888))),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // ── 推薦支付軟體 label ──────────────────────────────────────────
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Text('推薦支付軟體',
+                style: TextStyle(
+                    fontSize: 12, fontWeight: FontWeight.w500,
+                    color: Color(0xFF888888))),
+          ),
+
+          // ── 最佳折扣大卡 ───────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: topDiscount != null
+                ? _buildTopDiscountCard(topDiscount)
+                : _buildFallbackDiscountCard(store),
+          ),
+
+          // ── 分隔線 ─────────────────────────────────────────────────────
+          const Divider(height: 1, thickness: 1, color: Color(0xFFF0F0F0),
+              indent: 16, endIndent: 16),
+
+          // ── 其他可用支付 label ─────────────────────────────────────────
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Text('其他可用支付軟體',
+                style: TextStyle(
+                    fontSize: 12, fontWeight: FontWeight.w500,
+                    color: Color(0xFF888888))),
+          ),
+
+          // ── 其他支付 chip 列 ────────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: _buildOtherPayRow(otherDiscounts),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── 最佳折扣大卡（彩色框） ───────────────────────────────────────────────
+  Widget _buildTopDiscountCard(DiscountRule rule) {
+    final platformId = _discountSoftwareToId(rule.paymentSoftware);
+    final platform = platformId != null ? _platformById(platformId) : null;
+    final color = platform?.color ?? const Color(0xFFE53935);
+
+    return GestureDetector(
+      onTap: platform != null ? () => _launchPayApp(platform) : null,
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          border: Border.all(color: color, width: 1.5),
+          borderRadius: BorderRadius.circular(14),
+          color: color.withOpacity(0.03),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 52, height: 52,
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Center(
+                child: Text(
+                  rule.paymentSoftware.length <= 2
+                      ? rule.paymentSoftware
+                      : '${rule.paymentSoftware[0]}${rule.paymentSoftware[1]}',
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w900, color: Colors.white),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(rule.paymentSoftware,
+                      style: TextStyle(
+                          fontSize: 15, fontWeight: FontWeight.w700, color: color)),
+                  const SizedBox(height: 2),
+                  Text(
+                    '回饋 ${(rule.equivalentRate * 100).toStringAsFixed(0)} %',
+                    style: TextStyle(
+                        fontSize: 22, fontWeight: FontWeight.w900,
+                        color: color, height: 1.2),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    rule.ruleDesc,
+                    style: const TextStyle(
+                        fontSize: 11, color: Color(0xFF666666)),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── fallback 大卡（無 DB 折扣） ──────────────────────────────────────────
+  Widget _buildFallbackDiscountCard(_StoreInfo store) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        border: Border.all(color: store.primaryColor, width: 1.5),
+        borderRadius: BorderRadius.circular(14),
+        color: store.primaryColor.withOpacity(0.03),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 52, height: 52,
+            decoration: BoxDecoration(
+              color: store.primaryColor,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Center(child: _buildStoreLogo(store.id)),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(store.name,
+                    style: TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w700,
+                        color: store.primaryColor)),
+                Text(
+                  '回饋 ${store.cashback}',
+                  style: TextStyle(
+                      fontSize: 22, fontWeight: FontWeight.w900,
+                      color: store.primaryColor),
+                ),
+                ...store.conditions.take(2).map((c) => Text(
+                      c.text,
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: c.isRed
+                              ? const Color(0xFFE53935)
+                              : const Color(0xFF666666)),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    )),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── 其他支付 chip 列 ─────────────────────────────────────────────────────
+  Widget _buildOtherPayRow(List<DiscountRule> otherDiscounts) {
+    return ValueListenableBuilder<List<String>>(
+      valueListenable: payMethodsNotifier,
+      builder: (_, enabledIds, __) {
+        final chips = <Widget>[];
+        final shownIds = <String>{};
+
+        // DB 其他折扣
+        for (final rule in otherDiscounts.take(4)) {
+          final id = _discountSoftwareToId(rule.paymentSoftware);
+          final platform = id != null ? _platformById(id) : null;
+          if (platform == null || shownIds.contains(id)) continue;
+          shownIds.add(id!);
+          chips.add(_buildPayChipV2(
+            platform,
+            badge: '${(rule.equivalentRate * 100).toStringAsFixed(0)}%',
+            onTap: () => _launchPayApp(platform),
+          ));
+        }
+
+        // 使用者設定的，排除已顯示的
+        final bestDiscounts = _getBestDiscounts();
+        if (bestDiscounts.isNotEmpty) {
+          final topId = _discountSoftwareToId(bestDiscounts.first.paymentSoftware);
+          if (topId != null) shownIds.add(topId);
+        }
+
+        for (final id in enabledIds) {
+          if (shownIds.contains(id)) continue;
+          final platform = _platformById(id);
+          if (platform == null) continue;
+          shownIds.add(id);
+          chips.add(_buildPayChipV2(
+            platform,
+            onTap: () => _launchPayApp(platform),
+          ));
+        }
+
+        if (chips.isEmpty) {
+          return GestureDetector(
+            onTap: () {
+              final root = context.findAncestorStateOfType<_RootScreenState>();
+              root?.switchTab(1);
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                border: Border.all(color: const Color(0xFFE0E0E0)),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Text('+ 新增支付方式',
+                  style: TextStyle(fontSize: 12, color: Color(0xFF1A73E8))),
+            ),
+          );
+        }
+
+        return Wrap(spacing: 8, runSpacing: 8, children: chips);
+      },
+    );
+  }
+
+  // ── 支付 Chip ────────────────────────────────────────────────────────────
+  Widget _buildPayChipV2(_PayPlatform p,
+      {String? badge, VoidCallback? onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border.all(color: const Color(0xFFE8E8E8)),
+          borderRadius: BorderRadius.circular(10),
+          boxShadow: const [
+            BoxShadow(
+                color: Color(0x06000000), blurRadius: 4, offset: Offset(0, 1)),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 28, height: 28,
+              decoration: BoxDecoration(
+                color: p.color,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Center(
+                child: Text(
+                  p.iconText.replaceAll('\n', '')[0],
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w900, color: Colors.white),
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(p.label,
+                    style: const TextStyle(
+                        fontSize: 11, fontWeight: FontWeight.w600,
+                        color: Color(0xFF222222))),
+                if (badge != null)
+                  Text(badge,
+                      style: const TextStyle(
+                          fontSize: 10,
+                          color: Color(0xFFE53935),
+                          fontWeight: FontWeight.w700)),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── 會員 & 載具條碼按鈕 ──────────────────────────────────────────────────
+  Widget _buildMemberPill(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: carrierSetupNotifier,
+      builder: (_, carrierReady, __) {
+        return ValueListenableBuilder<Map<String, bool>>(
+          valueListenable: memberSetupNotifier,
+          builder: (_, memberMap, __) {
+            final isReady = carrierReady || memberMap.values.any((v) => v);
+            return GestureDetector(
+              onTap: () {
+                final root = context.findAncestorStateOfType<_RootScreenState>();
+                root?.switchTab(1);
+              },
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                decoration: BoxDecoration(
+                  color: isReady ? const Color(0xFF4CAF50) : Colors.white,
+                  borderRadius: BorderRadius.circular(50),
+                  border: isReady
+                      ? null
+                      : Border.all(color: const Color(0xFFE0E0E0)),
+                  boxShadow: isReady
+                      ? [const BoxShadow(
+                          color: Color(0x254CAF50),
+                          blurRadius: 12,
+                          offset: Offset(0, 4))]
+                      : null,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      isReady ? Icons.check_circle : Icons.radio_button_unchecked,
+                      color: isReady ? Colors.white : const Color(0xFFCCCCCC),
+                      size: 20,
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      '會員 & 載具條碼',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: isReady ? Colors.white : const Color(0xFF333333),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // ── 超商 Logo Widget ─────────────────────────────────────────────────────
   Widget _buildStoreLogo(String id) {
     switch (id) {
       case 'fm':
@@ -1114,7 +1323,8 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
           ),
         ]);
       case 'seven':
-        return SizedBox(width: 36, height: 36,
+        return SizedBox(
+          width: 36, height: 36,
           child: Stack(children: [
             Positioned.fill(child: ClipRRect(
               borderRadius: BorderRadius.circular(4),
@@ -1132,14 +1342,17 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
       case 'hilife':
         return Container(
           width: 36, height: 36,
-          decoration: const BoxDecoration(color: Color(0xFFE53935), shape: BoxShape.circle),
+          decoration: const BoxDecoration(
+              color: Color(0xFFE53935), shape: BoxShape.circle),
           child: const Center(child: Text('Hi',
               style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: Colors.white))),
         );
       case 'ok':
         return Container(
           width: 40, height: 26,
-          decoration: BoxDecoration(color: const Color(0xFFE53935), borderRadius: BorderRadius.circular(4)),
+          decoration: BoxDecoration(
+              color: const Color(0xFFE53935),
+              borderRadius: BorderRadius.circular(4)),
           child: const Center(child: Text('OK',
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w900,
                   color: Colors.white, letterSpacing: -0.5))),
@@ -1150,321 +1363,75 @@ class _HomeTabState extends State<HomeTab> with WidgetsBindingObserver {
   }
 
   // ════════════════════════════════════════════════════════════════════════
-  // 中央資訊卡片（加入折扣優惠區塊）
+  // 傾斜時的全螢幕條碼 Overlay
   // ════════════════════════════════════════════════════════════════════════
 
-  Widget _buildInfoCard() {
-    final store = _kStores[_activeStoreId]!;
-    final branchName = (_selectedStore != null &&
-            _matchStoreId(_selectedStore!['name']!) == _activeStoreId)
-        ? _selectedStore!['fullName']
-        : null;
-
-    final bestDiscounts = _getBestDiscounts();
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
+  Widget _buildTiltOverlay(BuildContext context) {
+    return AnimatedOpacity(
+      opacity: _isTilted ? 1.0 : 0.0,
+      duration: const Duration(milliseconds: 250),
+      child: Container(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFE8E8E8)),
-      ),
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // ── 上半：LOGO列 + 店名 / 回饋 / 條件 ──────────────────────
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildStoreLogo(_activeStoreId),
-                    const SizedBox(height: 8),
-                    _buildPayTag('LINE Pay', const Color(0xFF00B900)),
-                    const SizedBox(height: 4),
-                    _buildPayTag('街口支付', const Color(0xFFE53935)),
-                  ],
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(store.name,
-                                    style: const TextStyle(
-                                        fontSize: 13, fontWeight: FontWeight.w700,
-                                        color: Color(0xFF111111))),
-                                if (branchName != null)
-                                  Text(branchName,
-                                      style: const TextStyle(fontSize: 10, color: Colors.grey),
-                                      maxLines: 1, overflow: TextOverflow.ellipsis),
-                              ],
-                            ),
+        child: SafeArea(
+          child: RotatedBox(
+            quarterTurns: 2,
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.blue.shade200),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.barcode_reader,
+                            color: Colors.blue.shade700, size: 18),
+                        const SizedBox(width: 8),
+                        Text(
+                          '請掃描以下條碼',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.blue.shade800,
                           ),
-                          if (store.hasBadge)
-                            Container(
-                              width: 9, height: 9,
-                              margin: const EdgeInsets.only(left: 4, top: 3),
-                              decoration: const BoxDecoration(
-                                  color: Color(0xFFE53935), shape: BoxShape.circle),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text('回饋 ${store.cashback}',
-                          style: const TextStyle(
-                              fontSize: 20, fontWeight: FontWeight.w900,
-                              color: Color(0xFF1A73E8))),
-                      const SizedBox(height: 6),
-                      ...store.conditions.map((c) => Padding(
-                            padding: const EdgeInsets.only(bottom: 3),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 4),
-                                  child: Container(
-                                    width: 6, height: 6,
-                                    decoration: BoxDecoration(
-                                      color: c.isRed
-                                          ? const Color(0xFFE53935)
-                                          : const Color(0xFF444444),
-                                      shape: BoxShape.circle,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 5),
-                                Expanded(
-                                  child: Text(c.text,
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: c.isRed ? FontWeight.w600 : FontWeight.w400,
-                                        color: c.isRed
-                                            ? const Color(0xFFE53935)
-                                            : const Color(0xFF333333),
-                                      )),
-                                ),
-                              ],
-                            ),
-                          )),
-                    ],
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ),
-
-            const Divider(height: 14, thickness: 1, color: Color(0xFFF0F0F0)),
-
-            // ── 行動支付折扣優惠（從 discount_rules 資料庫）────────────────
-            if (bestDiscounts.isNotEmpty) ...[
-              Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Row(
-                  children: [
-                    const Icon(Icons.local_offer_outlined,
-                        size: 12, color: Color(0xFFE53935)),
-                    const SizedBox(width: 4),
-                    Text(
-                      '最佳行動支付優惠',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.grey[600],
-                      ),
-                    ),
-                  ],
-                ),
+                  const SizedBox(height: 24),
+                  _TiltBarcodeSection(
+                    title: '會員條碼',
+                    icon: Icons.person_outline,
+                    prefKeyCode:
+                        'member_barcode_${_kStores[_activeStoreId]?.name ?? "_generic"}',
+                    prefKeyType:
+                        'member_type_${_kStores[_activeStoreId]?.name ?? "_generic"}',
+                  ),
+                  const SizedBox(height: 20),
+                  const _TiltCarrierSection(),
+                  const SizedBox(height: 20),
+                  Text(
+                    '將手機收回即可返回首頁',
+                    style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
+                  ),
+                ],
               ),
-              ...bestDiscounts.take(3).map((rule) => _buildDiscountRow(rule)),
-              const Divider(height: 12, thickness: 1, color: Color(0xFFF0F0F0)),
-            ],
-
-            // ── 使用者選取的行動支付 chip ──────────────────────────────────
-            ValueListenableBuilder<List<String>>(
-              valueListenable: payMethodsNotifier,
-              builder: (_, ids, __) {
-                if (ids.isEmpty) {
-                  return GestureDetector(
-                    onTap: () {
-                      final root = context.findAncestorStateOfType<_RootScreenState>();
-                      root?.switchTab(1);
-                    },
-                    child: Text(
-                      '尚未設定行動支付 → 點此前往「會員」頁面選擇',
-                      style: TextStyle(fontSize: 10, color: Colors.blue[400]),
-                    ),
-                  );
-                }
-                final platforms = ids.map(_platformById).whereType<_PayPlatform>().toList();
-                return Wrap(
-                  spacing: 6,
-                  runSpacing: 5,
-                  children: platforms.map((p) => GestureDetector(
-                        onTap: () => _launchPayApp(p),
-                        child: _buildPayChip(p),
-                      )).toList(),
-                );
-              },
             ),
-          ],
+          ),
         ),
       ),
-    );
-  }
-
-  /// 折扣優惠列（來自 discount_rules）
-  Widget _buildDiscountRow(DiscountRule rule) {
-    final platformId = _discountSoftwareToId(rule.paymentSoftware);
-    final platform = platformId != null ? _platformById(platformId) : null;
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 5),
-      child: Row(
-        children: [
-          // 平台色塊
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(
-              color: platform?.color ?? Colors.grey,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              rule.paymentSoftware,
-              style: const TextStyle(
-                  fontSize: 8.5, fontWeight: FontWeight.w700, color: Colors.white),
-            ),
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              rule.ruleDesc,
-              style: const TextStyle(fontSize: 9.5, color: Color(0xFF333333)),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          // 折扣率標籤
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFF3E0),
-              borderRadius: BorderRadius.circular(4),
-              border: Border.all(color: const Color(0xFFFFB300), width: 0.5),
-            ),
-            child: Text(
-              '${(rule.equivalentRate * 100).toStringAsFixed(0)}%折',
-              style: const TextStyle(
-                  fontSize: 8, fontWeight: FontWeight.w700, color: Color(0xFFE65100)),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPayTag(String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(5)),
-      child: Text(label,
-          style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.w700, color: Colors.white)),
-    );
-  }
-
-  Widget _buildPayChip(_PayPlatform p) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        border: Border.all(color: const Color(0xFFE0E0E0)),
-        borderRadius: BorderRadius.circular(8),
-        color: Colors.white,
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 14, height: 14,
-            decoration: BoxDecoration(color: p.color, borderRadius: BorderRadius.circular(3)),
-            child: Center(
-              child: Text(p.iconText.replaceAll('\n', '')[0],
-                  style: const TextStyle(
-                      fontSize: 7, fontWeight: FontWeight.w900, color: Colors.white)),
-            ),
-          ),
-          const SizedBox(width: 4),
-          Text(p.label, style: const TextStyle(fontSize: 9.5, color: Color(0xFF555555))),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMemberPill(BuildContext context) {
-    return ValueListenableBuilder<bool>(
-      valueListenable: carrierSetupNotifier,
-      builder: (_, carrierReady, __) {
-        return ValueListenableBuilder<Map<String, bool>>(
-          valueListenable: memberSetupNotifier,
-          builder: (_, memberMap, __) {
-            final isReady = carrierReady || memberMap.values.any((v) => v);
-            return GestureDetector(
-              onTap: () {
-                final root = context.findAncestorStateOfType<_RootScreenState>();
-                root?.switchTab(1);
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(30),
-                  border: Border.all(color: const Color(0xFFE0E0E0)),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (isReady)
-                      const Icon(Icons.check_circle, color: Color(0xFF43A047), size: 14)
-                    else
-                      const Text('未完善',
-                          style: TextStyle(
-                              fontSize: 10, fontWeight: FontWeight.w700,
-                              color: Color(0xFFE53935))),
-                    const SizedBox(width: 10),
-                    const Text('會員 or 載具',
-                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-                    const SizedBox(width: 10),
-                    Row(
-                      children: List.generate(3, (i) => Container(
-                        width: 7, height: 7,
-                        margin: const EdgeInsets.symmetric(horizontal: 2),
-                        decoration: BoxDecoration(
-                          color: i == 0 ? const Color(0xFF333333) : const Color(0xFFCCCCCC),
-                          shape: BoxShape.circle,
-                        ),
-                      )),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
     );
   }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// 傾斜 Overlay 專用：會員條碼區塊（從 SharedPreferences 讀取）
+// 傾斜 Overlay：會員條碼區塊
 // ════════════════════════════════════════════════════════════════════════════
 
 class _TiltBarcodeSection extends StatefulWidget {
@@ -1496,11 +1463,9 @@ class _TiltBarcodeSectionState extends State<_TiltBarcodeSection> {
 
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
-    // 嘗試通用 key
     String? code = prefs.getString(widget.prefKeyCode);
     String? type = prefs.getString(widget.prefKeyType);
 
-    // fallback：嘗試其他超商 key
     if (code == null) {
       for (final brand in ['全家便利商店', '7-ELEVEN', '萊爾富', 'OK便利商店', '_generic']) {
         code = prefs.getString('member_barcode_$brand');
@@ -1558,8 +1523,10 @@ class _TiltBarcodeSectionState extends State<_TiltBarcodeSection> {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.grey.shade200),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.04),
-              blurRadius: 8, offset: const Offset(0, 2))
+          BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 2))
         ],
       ),
       child: Column(
@@ -1571,7 +1538,8 @@ class _TiltBarcodeSectionState extends State<_TiltBarcodeSection> {
               const SizedBox(width: 4),
               Text(widget.title,
                   style: TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w600,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
                       color: Colors.grey.shade700)),
             ],
           ),
@@ -1608,7 +1576,7 @@ class _TiltBarcodeSectionState extends State<_TiltBarcodeSection> {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// 傾斜 Overlay 專用：載具條碼區塊
+// 傾斜 Overlay：載具條碼區塊
 // ════════════════════════════════════════════════════════════════════════════
 
 class _TiltCarrierSection extends StatefulWidget {
@@ -1665,8 +1633,10 @@ class _TiltCarrierSectionState extends State<_TiltCarrierSection> {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.grey.shade200),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.04),
-              blurRadius: 8, offset: const Offset(0, 2))
+          BoxShadow(
+              color: Colors.black.withOpacity(0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 2))
         ],
       ),
       child: Column(
@@ -1678,7 +1648,8 @@ class _TiltCarrierSectionState extends State<_TiltCarrierSection> {
               const SizedBox(width: 4),
               Text('電子載具',
                   style: TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w600,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
                       color: Colors.grey.shade700)),
             ],
           ),
@@ -1696,8 +1667,10 @@ class _TiltCarrierSectionState extends State<_TiltCarrierSection> {
           const SizedBox(height: 8),
           Text(_code!,
               style: const TextStyle(
-                  fontFamily: 'monospace', fontSize: 14,
-                  letterSpacing: 2, fontWeight: FontWeight.w600)),
+                  fontFamily: 'monospace',
+                  fontSize: 14,
+                  letterSpacing: 2,
+                  fontWeight: FontWeight.w600)),
         ],
       ),
     );
@@ -1717,7 +1690,6 @@ class PaymentBarcodeScreen extends StatefulWidget {
 }
 
 class _PaymentBarcodeScreenState extends State<PaymentBarcodeScreen> {
-  static const _volumeChannel = MethodChannel('com.example.hi/volume');
   double _originalBrightness = 0.5;
   bool _isFlipped = false;
   StreamSubscription? _accelSub;
@@ -1726,9 +1698,6 @@ class _PaymentBarcodeScreenState extends State<PaymentBarcodeScreen> {
   void initState() {
     super.initState();
     _setBrightness();
-    _volumeChannel.setMethodCallHandler((call) async {
-      if (call.method == 'volumeDown' && mounted) _switchToNext();
-    });
     _accelSub = accelerometerEventStream(
       samplingPeriod: SensorInterval.normalInterval,
     ).listen((event) {
@@ -1748,30 +1717,18 @@ class _PaymentBarcodeScreenState extends State<PaymentBarcodeScreen> {
     }
   }
 
-  void _switchToNext() {
-    final ids = payMethodsNotifier.value;
-    if (ids.isEmpty) return;
-    final idx = ids.indexOf(widget.platformId);
-    final nextId = ids[(idx + 1) % ids.length];
-    final next = _platformById(nextId);
-    if (next == null) return;
-    Navigator.pushReplacement(context, MaterialPageRoute(
-      builder: (_) => PaymentBarcodeScreen(platformId: nextId),
-      fullscreenDialog: true,
-    ));
-    _launchApp(next);
-  }
-
   @override
   void dispose() {
     _accelSub?.cancel();
-    ScreenBrightness().setScreenBrightness(_originalBrightness).catchError((_) {});
-    // 重新綁定首頁音量鍵（這裡無法直接操作，由 HomeTab 自行設定）
+    ScreenBrightness()
+        .setScreenBrightness(_originalBrightness)
+        .catchError((_) {});
     super.dispose();
   }
 
   Future<void> _launchApp(_PayPlatform platform) async {
-    final scheme = Platform.isIOS ? platform.iosScheme : platform.androidScheme;
+    final scheme =
+        Platform.isIOS ? platform.iosScheme : platform.androidScheme;
     if (scheme != null) {
       final uri = Uri.parse(scheme);
       if (await canLaunchUrl(uri)) {
@@ -1808,12 +1765,6 @@ class _PaymentBarcodeScreenState extends State<PaymentBarcodeScreen> {
           icon: const Icon(Icons.close),
           onPressed: () => Navigator.pop(context),
         ),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: Icon(Icons.volume_down, color: Colors.grey[400], size: 20),
-          ),
-        ],
       ),
       body: Center(
         child: AnimatedRotation(
@@ -1830,21 +1781,26 @@ class _PaymentBarcodeScreenState extends State<PaymentBarcodeScreen> {
                     color: platform.color,
                     borderRadius: BorderRadius.circular(28),
                     boxShadow: [
-                      BoxShadow(color: platform.color.withOpacity(0.35),
-                          blurRadius: 20, offset: const Offset(0, 8)),
+                      BoxShadow(
+                          color: platform.color.withOpacity(0.35),
+                          blurRadius: 20,
+                          offset: const Offset(0, 8)),
                     ],
                   ),
                   child: Center(
                     child: Text(platform.iconText,
                         style: const TextStyle(
-                            fontSize: 20, fontWeight: FontWeight.w900,
-                            color: Colors.white, height: 1.3),
+                            fontSize: 20,
+                            fontWeight: FontWeight.w900,
+                            color: Colors.white,
+                            height: 1.3),
                         textAlign: TextAlign.center),
                   ),
                 ),
                 const SizedBox(height: 28),
                 Text(platform.label,
-                    style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+                    style: const TextStyle(
+                        fontSize: 22, fontWeight: FontWeight.w800)),
                 const SizedBox(height: 8),
                 Text(
                   platform.universalUrl != null
@@ -1877,15 +1833,14 @@ class _PaymentBarcodeScreenState extends State<PaymentBarcodeScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.screen_rotation, size: 13, color: Colors.grey[400]),
+                    Icon(Icons.screen_rotation,
+                        size: 13, color: Colors.grey[400]),
                     const SizedBox(width: 4),
                     Text('傾斜手機，畫面自動翻轉給店員看',
-                        style: TextStyle(fontSize: 11, color: Colors.grey[400])),
+                        style:
+                            TextStyle(fontSize: 11, color: Colors.grey[400])),
                   ],
                 ),
-                const SizedBox(height: 6),
-                Text('音量↓ 切換下一個行動支付並開啟',
-                    style: TextStyle(fontSize: 11, color: Colors.grey[350])),
               ],
             ),
           ),
@@ -1926,28 +1881,41 @@ class _StorePickerSheet extends StatelessWidget {
         children: [
           Center(
             child: Container(
-              width: 40, height: 4,
+              width: 40,
+              height: 4,
               margin: const EdgeInsets.only(bottom: 16),
               decoration: BoxDecoration(
-                  color: cs.outlineVariant, borderRadius: BorderRadius.circular(2)),
+                  color: cs.outlineVariant,
+                  borderRadius: BorderRadius.circular(2)),
             ),
           ),
           Text('選擇店家',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600,
+              style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w600,
                   color: cs.onSurface)),
           const SizedBox(height: 4),
           Text('選擇後將顯示對應的會員/支付條碼',
-              style: TextStyle(fontSize: 13, color: cs.onSurface.withOpacity(0.5))),
+              style: TextStyle(
+                  fontSize: 13,
+                  color: cs.onSurface.withOpacity(0.5))),
           const SizedBox(height: 16),
           ...stores.map((s) {
             final selected = selectedStore?['fullName'] == s['fullName'];
             return ListTile(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
               leading: Icon(Icons.store,
-                  color: selected ? Colors.blue : cs.onSurface.withOpacity(0.5)),
-              title: Text(s['name']!, style: const TextStyle(fontWeight: FontWeight.w500)),
-              subtitle: Text(s['fullName']!, style: const TextStyle(fontSize: 11)),
-              trailing: selected ? const Icon(Icons.check_circle, color: Colors.blue) : null,
+                  color: selected
+                      ? Colors.blue
+                      : cs.onSurface.withOpacity(0.5)),
+              title: Text(s['name']!,
+                  style: const TextStyle(fontWeight: FontWeight.w500)),
+              subtitle: Text(s['fullName']!,
+                  style: const TextStyle(fontSize: 11)),
+              trailing: selected
+                  ? const Icon(Icons.check_circle, color: Colors.blue)
+                  : null,
               onTap: () => onSelected(s),
             );
           }),
@@ -1958,7 +1926,7 @@ class _StorePickerSheet extends StatelessWidget {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// MemberTab — 設定行動支付 / 超商會員 / 載具
+// MemberTab
 // ════════════════════════════════════════════════════════════════════════════
 
 class MemberTab extends StatefulWidget {
@@ -1970,7 +1938,6 @@ class MemberTab extends StatefulWidget {
 
 class _MemberTabState extends State<MemberTab> {
 
-  // ✅ 改為持久化：toggle 後立即存檔
   void _togglePlatform(String id) {
     final current = List<String>.from(payMethodsNotifier.value);
     if (current.contains(id)) {
@@ -1979,17 +1946,16 @@ class _MemberTabState extends State<MemberTab> {
       current.add(id);
     }
     payMethodsNotifier.value = current;
-    savePayMethods(current); // ✅ 持久化
+    savePayMethods(current);
   }
 
-  // ✅ 改為持久化：拖曳排序後立即存檔
   void _movePlatform(int oldIdx, int newIdx) {
     final current = List<String>.from(payMethodsNotifier.value);
     if (newIdx > oldIdx) newIdx--;
     final item = current.removeAt(oldIdx);
     current.insert(newIdx, item);
     payMethodsNotifier.value = current;
-    savePayMethods(current); // ✅ 持久化
+    savePayMethods(current);
   }
 
   @override
@@ -2006,7 +1972,6 @@ class _MemberTabState extends State<MemberTab> {
         padding: const EdgeInsets.all(16),
         children: [
 
-          // ── 行動支付 ──────────────────────────────────────────────────────
           _sectionLabel('行動支付'),
           Padding(
             padding: const EdgeInsets.only(left: 4, bottom: 10),
@@ -2028,10 +1993,12 @@ class _MemberTabState extends State<MemberTab> {
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                         child: Row(children: [
-                          const Icon(Icons.drag_indicator, size: 14, color: Colors.grey),
+                          const Icon(Icons.drag_indicator,
+                              size: 14, color: Colors.grey),
                           const SizedBox(width: 4),
                           Text('已選擇（長按拖曳排序）',
-                              style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                              style: TextStyle(
+                                  fontSize: 11, color: Colors.grey[500])),
                         ]),
                       ),
                       ReorderableListView(
@@ -2042,21 +2009,24 @@ class _MemberTabState extends State<MemberTab> {
                           final idx = e.key;
                           final id = e.value;
                           final platform = _platformById(id);
-                          if (platform == null) return const SizedBox(key: ValueKey('_'));
+                          if (platform == null) {
+                            return const SizedBox(key: ValueKey('_'));
+                          }
                           return _buildPlatformTile(
                             key: ValueKey(id),
                             platform: platform,
                             enabled: true,
                             isFirst: idx == 0,
                             showDivider: idx < enabledIds.length - 1 ||
-                                _kPayPlatforms.any((p) => !enabledIds.contains(p.id)),
+                                _kPayPlatforms
+                                    .any((p) => !enabledIds.contains(p.id)),
                           );
                         }).toList(),
                       ),
-                      if (_kPayPlatforms.any((p) => !enabledIds.contains(p.id)))
+                      if (_kPayPlatforms
+                          .any((p) => !enabledIds.contains(p.id)))
                         const Divider(height: 1, indent: 16, endIndent: 16),
                     ],
-
                     ..._kPayPlatforms
                         .where((p) => !enabledIds.contains(p.id))
                         .toList()
@@ -2073,7 +2043,6 @@ class _MemberTabState extends State<MemberTab> {
                         showDivider: e.key < remaining.length - 1,
                       );
                     }),
-
                     const SizedBox(height: 4),
                   ],
                 ),
@@ -2083,17 +2052,16 @@ class _MemberTabState extends State<MemberTab> {
 
           const SizedBox(height: 24),
 
-          // ── 超商會員 ──────────────────────────────────────────────────────
           _sectionLabel('超商會員'),
 
           ValueListenableBuilder<Map<String, bool>>(
             valueListenable: memberSetupNotifier,
             builder: (_, memberMap, __) {
               final entries = [
-                ('fm',     '全家便利商店', '全家'),
-                ('seven',  '7-ELEVEN',   '7-ELEVEN'),
-                ('hilife', '萊爾富',      '萊爾富'),
-                ('ok',     'OK便利商店',  'OK超商'),
+                ('fm', '全家便利商店', '全家'),
+                ('seven', '7-ELEVEN', '7-ELEVEN'),
+                ('hilife', '萊爾富', '萊爾富'),
+                ('ok', 'OK便利商店', 'OK超商'),
               ];
               return Material(
                 color: Colors.white,
@@ -2109,22 +2077,29 @@ class _MemberTabState extends State<MemberTab> {
                           leading: Icon(Icons.store_outlined,
                               color: isSetup ? Colors.blue : Colors.grey[400]),
                           title: Text(displayName,
-                              style: const TextStyle(fontWeight: FontWeight.w600)),
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w600)),
                           trailing: isSetup
-                              ? const Icon(Icons.check_circle, color: Color(0xFF43A047))
-                              : const Icon(Icons.chevron_right, color: Colors.grey),
+                              ? const Icon(Icons.check_circle,
+                                  color: Color(0xFF43A047))
+                              : const Icon(Icons.chevron_right,
+                                  color: Colors.grey),
                           onTap: () async {
-                            await Navigator.push(context,
+                            await Navigator.push(
+                                context,
                                 MaterialPageRoute(
-                                    builder: (_) => MemberBarcodeScreen(brandName: brandName),
+                                    builder: (_) => MemberBarcodeScreen(
+                                        brandName: brandName),
                                     fullscreenDialog: true));
-                            final updated = Map<String, bool>.from(memberSetupNotifier.value);
+                            final updated = Map<String, bool>.from(
+                                memberSetupNotifier.value);
                             updated[id] = true;
                             memberSetupNotifier.value = updated;
                           },
                         ),
                         if (idx < entries.length - 1)
-                          const Divider(height: 1, indent: 16, endIndent: 16),
+                          const Divider(
+                              height: 1, indent: 16, endIndent: 16),
                       ],
                     );
                   }).toList(),
@@ -2135,7 +2110,6 @@ class _MemberTabState extends State<MemberTab> {
 
           const SizedBox(height: 24),
 
-          // ── 電子載具 ──────────────────────────────────────────────────────
           Row(
             children: [
               Expanded(
@@ -2143,14 +2117,17 @@ class _MemberTabState extends State<MemberTab> {
                   padding: const EdgeInsets.only(left: 4, bottom: 10),
                   child: Text('電子載具',
                       style: TextStyle(
-                          fontSize: 13, fontWeight: FontWeight.w600,
-                          color: Colors.grey[500], letterSpacing: 0.5)),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey[500],
+                          letterSpacing: 0.5)),
                 ),
               ),
               IconButton(
                 icon: const Icon(Icons.add, size: 20),
                 onPressed: () async {
-                  await Navigator.push(context,
+                  await Navigator.push(
+                      context,
                       MaterialPageRoute(
                           builder: (_) => const CarrierInputScreen(),
                           fullscreenDialog: true));
@@ -2169,10 +2146,12 @@ class _MemberTabState extends State<MemberTab> {
               title: '電子載具（手機條碼）',
               subtitle: isSetup ? '已設定 ✓' : '點擊設定 /XXXXXXX',
               statusIcon: isSetup
-                  ? const Icon(Icons.check_circle, color: Color(0xFF43A047), size: 20)
+                  ? const Icon(Icons.check_circle,
+                      color: Color(0xFF43A047), size: 20)
                   : null,
               onTap: () async {
-                await Navigator.push(context,
+                await Navigator.push(
+                    context,
                     MaterialPageRoute(
                         builder: (_) => const CarrierInputScreen(),
                         fullscreenDialog: true));
@@ -2183,7 +2162,6 @@ class _MemberTabState extends State<MemberTab> {
 
           const SizedBox(height: 24),
 
-          // ── 其他 ─────────────────────────────────────────────────────────
           _sectionLabel('其他'),
           _EntryCard(
             icon: Icons.info_outline,
@@ -2214,7 +2192,8 @@ class _MemberTabState extends State<MemberTab> {
       children: [
         ListTile(
           leading: Container(
-            width: 36, height: 36,
+            width: 36,
+            height: 36,
             decoration: BoxDecoration(
               color: enabled ? platform.color : Colors.grey[200],
               borderRadius: BorderRadius.circular(8),
@@ -2223,7 +2202,8 @@ class _MemberTabState extends State<MemberTab> {
               child: Text(
                 platform.iconText.replaceAll('\n', ' ').trim()[0],
                 style: TextStyle(
-                  fontSize: 15, fontWeight: FontWeight.w900,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
                   color: enabled ? Colors.white : Colors.grey[400],
                 ),
               ),
@@ -2248,10 +2228,13 @@ class _MemberTabState extends State<MemberTab> {
               ),
               if (enabled)
                 IconButton(
-                  icon: Icon(Icons.open_in_new, size: 18, color: Colors.grey[500]),
-                  onPressed: () => Navigator.push(context,
+                  icon: Icon(Icons.open_in_new,
+                      size: 18, color: Colors.grey[500]),
+                  onPressed: () => Navigator.push(
+                      context,
                       MaterialPageRoute(
-                          builder: (_) => PaymentBarcodeScreen(platformId: platform.id),
+                          builder: (_) =>
+                              PaymentBarcodeScreen(platformId: platform.id),
                           fullscreenDialog: true)),
                   tooltip: '測試開啟',
                 ),
@@ -2268,8 +2251,10 @@ class _MemberTabState extends State<MemberTab> {
         padding: const EdgeInsets.only(left: 4, bottom: 10),
         child: Text(label,
             style: TextStyle(
-                fontSize: 13, fontWeight: FontWeight.w600,
-                color: Colors.grey[500], letterSpacing: 0.5)),
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey[500],
+                letterSpacing: 0.5)),
       );
 }
 
@@ -2297,8 +2282,10 @@ class SettingsTab extends StatelessWidget {
             padding: const EdgeInsets.only(left: 4, bottom: 10),
             child: Text('一般',
                 style: TextStyle(
-                    fontSize: 13, fontWeight: FontWeight.w600,
-                    color: Colors.grey[500], letterSpacing: 0.5)),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey[500],
+                    letterSpacing: 0.5)),
           ),
           _EntryCard(
             icon: Icons.info_outline,
@@ -2352,7 +2339,8 @@ class _EntryCard extends StatelessWidget {
           child: Row(
             children: [
               Container(
-                width: 44, height: 44,
+                width: 44,
+                height: 44,
                 decoration: BoxDecoration(
                   color: iconColor.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(12),
@@ -2365,14 +2353,17 @@ class _EntryCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(title,
-                        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w600, fontSize: 15)),
                     const SizedBox(height: 2),
                     Text(subtitle,
-                        style: TextStyle(fontSize: 12, color: Colors.grey[500])),
+                        style: TextStyle(
+                            fontSize: 12, color: Colors.grey[500])),
                   ],
                 ),
               ),
-              statusIcon ?? const Icon(Icons.chevron_right, color: Colors.grey),
+              statusIcon ??
+                  const Icon(Icons.chevron_right, color: Colors.grey),
             ],
           ),
         ),
