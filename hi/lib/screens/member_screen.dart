@@ -10,7 +10,7 @@ import '../features/invoice/presentation/screens/carrier_input_screen.dart';
 import '../features/invoice/presentation/screens/member_barcode_screen.dart';
 
 // ════════════════════════════════════════════════════════════════════════════
-// 資料模型與對應表
+// 資料模型
 // ════════════════════════════════════════════════════════════════════════════
 
 class UserPaySetting {
@@ -21,6 +21,7 @@ class UserPaySetting {
   UserPaySetting({required this.id, required this.platform, required this.level, required this.methods});
 }
 
+// 與 SQL 檔案中的表名對應 (必須與 等級.sql / 支付方式.sql 一致)
 const Map<String, String> kPlatformTableMap = {
   '悠遊付': 'Easy_wallet',
   '街口支付': 'JKOPay',
@@ -144,7 +145,7 @@ class _MemberScreenState extends State<MemberScreen> {
     );
   }
 
-  // ── 行動支付區塊內容 ────────────────────────────────────────────────────────
+  // ── 1. 行動支付區塊內容 ────────────────────────────────────────────────────────
 
   Widget _buildPayContent() {
     final platforms = ['悠遊付', '街口支付', '全支付', '台灣Pay', 'LINE Pay'];
@@ -167,7 +168,7 @@ class _MemberScreenState extends State<MemberScreen> {
               const Spacer(),
               IconButton(
                 icon: const Icon(Icons.add_circle_outline, color: Colors.blue),
-                onPressed: () => _showConfigDialog(platformName),
+                onPressed: () => _showPayConfigDialog(platformName),
               ),
             ],
           ),
@@ -175,9 +176,9 @@ class _MemberScreenState extends State<MemberScreen> {
             padding: const EdgeInsets.symmetric(vertical: 4),
             child: Row(
               children: [
-                Expanded(child: Text('${s.level == "0" ? "" : s.level + " | "}${s.methods.join(", ")}', style: const TextStyle(fontSize: 13))),
+                Expanded(child: Text('${s.level == "0" ? "一般" : s.level} | ${s.methods.join(", ")}', style: const TextStyle(fontSize: 13))),
                 _buildModifyBox(
-                  onEdit: () => _showConfigDialog(platformName, existing: s),
+                  onEdit: () => _showPayConfigDialog(platformName, existing: s),
                   onDelete: () => _deleteSetting(s.id)
                 ),
               ],
@@ -188,7 +189,7 @@ class _MemberScreenState extends State<MemberScreen> {
     );
   }
 
-  // ── 會員區塊內容 ──────────────────────────────────────────────────────────
+  // ── 2. 會員區塊內容 ──────────────────────────────────────────────────────────
 
   Widget _buildMemberContent() {
     final stores = ['7-ELEVEN', '全家', '萊爾富', 'OK'];
@@ -215,7 +216,7 @@ class _MemberScreenState extends State<MemberScreen> {
     );
   }
 
-  // ── 載具區塊內容 ──────────────────────────────────────────────────────────
+  // ── 3. 載具區塊內容 ──────────────────────────────────────────────────────────
 
   Widget _buildCarrierContent() {
     return Container(
@@ -266,71 +267,88 @@ class _MemberScreenState extends State<MemberScreen> {
     );
   }
 
-  // ── 設定彈窗邏輯（動態從資料庫讀取等級與支付方式） ──────────────────────────
+  // ── 設定彈窗邏輯（從資料庫讀取等級與支付方式） ───────────────────────────────
 
-  Future<void> _showConfigDialog(String platform, {UserPaySetting? existing}) async {
-    final dbPath = p.join(await getDatabasesPath(), 'pay_helper.db');
-    final db = await openDatabase(dbPath);
-    final String tableName = kPlatformTableMap[platform] ?? '';
+  Future<void> _showPayConfigDialog(String platform, {UserPaySetting? existing}) async {
+    try {
+      final dbPath = p.join(await getDatabasesPath(), 'pay_helper.db');
+      final db = await openDatabase(dbPath);
+      final String tableName = kPlatformTableMap[platform] ?? '';
 
-    // 從各平台專屬資料表抓取資料
-    final List<Map<String, dynamic>> levelsRaw = await db.query(tableName, columns: ['user_level']);
-    final List<Map<String, dynamic>> methodsRaw = await db.query(tableName, columns: ['payment_method']);
-    
-    final List<String> levelOptions = levelsRaw.map((e) => e['user_level'].toString()).where((e) => e != 'null').toSet().toList();
-    final List<String> methodOptions = methodsRaw.map((e) => e['payment_method'].toString()).where((e) => e != 'null').toSet().toList();
+      if (tableName.isEmpty) throw '找不到對應的資料表: $platform';
 
-    String selectedLevel = existing?.level ?? (levelOptions.isNotEmpty ? levelOptions.first : '0');
-    List<String> selectedMethods = existing != null ? List.from(existing.methods) : [];
+      // 讀取資料
+      final List<Map<String, dynamic>> levelsRaw = await db.query(tableName, columns: ['user_level']).catchError((_) => <Map<String, dynamic>>[]);
+      final List<Map<String, dynamic>> methodsRaw = await db.query(tableName, columns: ['payment_method']).catchError((_) => <Map<String, dynamic>>[]);
+      
+      final List<String> levelOptions = levelsRaw.map((e) => e['user_level']?.toString() ?? '').where((e) => e.isNotEmpty && e != 'null').toSet().toList();
+      final List<String> methodOptions = methodsRaw.map((e) => e['payment_method']?.toString() ?? '').where((e) => e.isNotEmpty && e != 'null').toSet().toList();
 
-    if (!mounted) return;
+      if (methodOptions.isEmpty) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('資料庫中無 $platform 的支付方式')));
+        return;
+      }
 
-    await showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(builder: (ctx, setDlgState) => AlertDialog(
-        title: Text('$platform 設定'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (levelOptions.isNotEmpty && levelOptions.first != '0') ...[
-                const Text('等級 (單選)', style: TextStyle(fontWeight: FontWeight.bold)),
-                DropdownButtonFormField<String>(
-                  isExpanded: true,
-                  value: selectedLevel,
-                  items: levelOptions.map((l) => DropdownMenuItem(value: l, child: Text(l))).toList(),
-                  onChanged: (v) => setDlgState(() => selectedLevel = v!),
-                  decoration: const InputDecoration(border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 10)),
-                ),
-                const SizedBox(height: 16),
+      String selectedLevel = existing?.level ?? (levelOptions.isNotEmpty ? levelOptions.first : '0');
+      List<String> selectedMethods = existing != null ? List.from(existing.methods) : [];
+
+      if (!mounted) return;
+
+      await showDialog(
+        context: context,
+        builder: (ctx) => StatefulBuilder(builder: (ctx, setDlgState) => AlertDialog(
+          title: Text('$platform 設定'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (levelOptions.isNotEmpty && levelOptions.first != '0') ...[
+                  const Text('等級 (單選)', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<String>(
+                    isExpanded: true,
+                    value: selectedLevel,
+                    items: levelOptions.map((l) => DropdownMenuItem(value: l, child: Text(l))).toList(),
+                    onChanged: (v) => setDlgState(() => selectedLevel = v!),
+                    decoration: const InputDecoration(border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 10)),
+                  ),
+                  const SizedBox(height: 20),
+                ],
+                const Text('支付方式 (可複選)', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                ...methodOptions.map((m) => CheckboxListTile(
+                  title: Text(m, style: const TextStyle(fontSize: 14)),
+                  value: selectedMethods.contains(m),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  contentPadding: EdgeInsets.zero,
+                  onChanged: (v) => setDlgState(() {
+                    v! ? selectedMethods.add(m) : selectedMethods.remove(m);
+                  }),
+                )),
               ],
-              const Text('支付方式 (可複選)', style: TextStyle(fontWeight: FontWeight.bold)),
-              ...methodOptions.map((m) => CheckboxListTile(
-                title: Text(m, style: const TextStyle(fontSize: 14)),
-                value: selectedMethods.contains(m),
-                controlAffinity: ListTileControlAffinity.leading,
-                contentPadding: EdgeInsets.zero,
-                onChanged: (v) => setDlgState(() {
-                  v! ? selectedMethods.add(m) : selectedMethods.remove(m);
-                }),
-              )),
-            ],
+            ),
           ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
-          ElevatedButton(onPressed: () async {
-            if (selectedMethods.isEmpty) return;
-            final prefs = await SharedPreferences.getInstance();
-            final id = existing?.id ?? 'pay_v3_${DateTime.now().millisecondsSinceEpoch}';
-            await prefs.setStringList(id, [platform, selectedLevel, ...selectedMethods]);
-            Navigator.pop(ctx);
-            _loadAllData();
-          }, child: const Text('儲存')),
-        ],
-      )),
-    );
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+            ElevatedButton(onPressed: () async {
+              if (selectedMethods.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('請至少選擇一種支付方式')));
+                return;
+              }
+              final prefs = await SharedPreferences.getInstance();
+              final id = existing?.id ?? 'pay_v3_${DateTime.now().millisecondsSinceEpoch}';
+              await prefs.setStringList(id, [platform, selectedLevel, ...selectedMethods]);
+              Navigator.pop(ctx);
+              _loadAllData();
+            }, child: const Text('儲存')),
+          ],
+        )),
+      );
+    } catch (e) {
+      debugPrint('❌ 開啟設定失敗: $e');
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('發生錯誤: $e')));
+    }
   }
 
   Future<void> _deleteSetting(String id) async {
