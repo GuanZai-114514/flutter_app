@@ -51,14 +51,14 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/brand_name.db
-    - assets/brand_name.sql
-    - assets/Payment/reward_rules.sql
-    - assets/Payment/discount_rules.sql
-    - assets/Payment/rule_store_map.sql
-    - assets/Payment/stores.sql
-    - assets/Payment/payment_options.sql
-    - assets/images/7-11.png
-    - assets/images/fm.png
-    - assets/images/hl.png
-    - assets/images/ok.png
+    - lib/assets/brand_name.db
+    - lib/assets/brand_name.sql
+    - lib/assets/Payment/reward_rules.sql
+    - lib/assets/Payment/discount_rules.sql
+    - lib/assets/Payment/rule_store_map.sql
+    - lib/assets/Payment/stores.sql
+    - lib/assets/Payment/payment_options.sql
+    - lib/assets/images/7-11.png
+    - lib/assets/images/fm.png
+    - lib/assets/images/hl.png
+    - lib/assets/images/ok.png
