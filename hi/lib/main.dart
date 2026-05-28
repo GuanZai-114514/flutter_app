@@ -83,25 +83,23 @@ class _RootScreenState extends State<RootScreen> {
       final path = p.join(await getDatabasesPath(), 'pay_helper.db');
       Database? db;
 
-      // 如果資料庫不存在，則進行初始化
       if (!await databaseExists(path)) {
         final copied = await _copyPrebuiltDatabase(path, 'lib/assets/brand_name.db');
         if (!copied) {
           db = await openDatabase(path, version: 1, onCreate: (db, ver) async {
-            // 執行基礎品牌資料
             await _loadAndExecuteSql(db, 'lib/assets/brand_name.sql');
-            // 執行您提供的所有支付與規則資料
             await _loadAndExecuteSql(db, 'lib/assets/Payment/reward_rules.sql');
             await _loadAndExecuteSql(db, 'lib/assets/Payment/discount_rules.sql');
             await _loadAndExecuteSql(db, 'lib/assets/Payment/rule_store_map.sql');
             await _loadAndExecuteSql(db, 'lib/assets/Payment/payment_options.sql');
+            await _loadAndExecuteSql(db, 'lib/assets/Payment/等級.sql');
+            await _loadAndExecuteSql(db, 'lib/assets/Payment/支付方式.sql');
+            await _loadAndExecuteSql(db, 'lib/assets/Payment/會員.sql');
           });
         }
       }
       
       db ??= await openDatabase(path, version: 1);
-      
-      // 確保必要的表都存在
       await _ensureTables(db);
       
       final rows = await db.query('brand_name');
@@ -141,21 +139,13 @@ class _RootScreenState extends State<RootScreen> {
   }
 
   Future<void> _ensureTables(Database db) async {
-    // 檢查 brand_name 表
-    final brandTable = await db.rawQuery(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='brand_name'",
+    final checkTable = await db.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='payment_software'",
     );
-    if (brandTable.isEmpty) {
-      await _loadAndExecuteSql(db, 'lib/assets/brand_name.sql');
-    }
-
-    // 檢查 discount_rules 表（HomeScreen 需要）
-    final discountTable = await db.rawQuery(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='discount_rules'",
-    );
-    if (discountTable.isEmpty) {
-      await _loadAndExecuteSql(db, 'lib/assets/Payment/discount_rules.sql');
-      await _loadAndExecuteSql(db, 'lib/assets/Payment/rule_store_map.sql');
+    if (checkTable.isEmpty) {
+      await _loadAndExecuteSql(db, 'lib/assets/Payment/等級.sql');
+      await _loadAndExecuteSql(db, 'lib/assets/Payment/支付方式.sql');
+      await _loadAndExecuteSql(db, 'lib/assets/Payment/會員.sql');
     }
   }
 
