@@ -1,40 +1,27 @@
-import 'package:barcode/barcode.dart' as bc;
+import 'package:barcode_widget/barcode_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 會員條碼畫面
 ///
-/// 支援條碼格式：
-///   - Code 128B → 英數混合，最通用（7-11、全家等）強制 B 子集
-///   - EAN-13    → 純 13 位數字
-///   - QR Code   → 任意字串（LINE、百貨會員等）
+/// 預設條碼格式：
+///   - Code 128  → 英數混合，最通用（7-11、全家等）✅ 支援斜線
 ///
-/// 持久化：key = member_barcode_{brand} / member_type_{brand}
+/// 持久化：
+///   - 按品牌分開儲存，key = member_barcode_{brand} / member_type_{brand}
+///   - 傳入 brandName 為空時使用通用 key
+///   - APP 重啟後自動載入
 class MemberBarcodeScreen extends StatefulWidget {
+  /// 品牌名稱，用於分開儲存不同店家的會員條碼。
   final String? brandName;
+
   const MemberBarcodeScreen({super.key, this.brandName});
 
   @override
   State<MemberBarcodeScreen> createState() => _MemberBarcodeScreenState();
-}
-
-// ── 條碼格式 ──────────────────────────────────────────────────────────────────
-
-enum _BarcodeType {
-  code128('Code 128', '英數混合，最通用（7-11、全家等），自動識別子集'),
-  ean13('EAN-13', '純 13 位數字'),
-  qrCode('QR Code', '任意字串（LINE、百貨會員等）');
-
-  const _BarcodeType(this.label, this.description);
-  final String label;
-  final String description;
-
-  static _BarcodeType fromString(String s) =>
-      _BarcodeType.values.firstWhere((e) => e.name == s, orElse: () => _BarcodeType.code128);
 }
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -45,8 +32,10 @@ class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
   String? _savedValue;
   bool _isScanning = false;
   bool _isLoading = true;
-  _BarcodeType _selectedType = _BarcodeType.code128;
+  // 預設固定為 Code 128
+  final String _selectedType = 'code128';
 
+  // ── prefs key ──
   String get _keyCode => 'member_barcode_${widget.brandName ?? "_generic"}';
   String get _keyType => 'member_type_${widget.brandName ?? "_generic"}';
 
@@ -62,37 +51,28 @@ class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
     super.dispose();
   }
 
-  // ── sanitize ──────────────────────────────────────────────
-  String _sanitize(String raw, _BarcodeType type) {
-    final trimmed = raw.trim().replaceAll(RegExp(r'\s'), '');
-    // QR Code 保留原始大小寫；1D 條碼統一大寫
-    return type == _BarcodeType.qrCode ? trimmed : trimmed.toUpperCase();
-  }
-
   // ── 持久化：讀取 ──────────────────────────────────────────
   Future<void> _loadSaved() async {
     final prefs = await SharedPreferences.getInstance();
     final code = prefs.getString(_keyCode);
-    final typeStr = prefs.getString(_keyType);
     if (!mounted) return;
     setState(() {
       if (code != null) {
-        final type = typeStr != null ? _BarcodeType.fromString(typeStr) : _BarcodeType.code128;
-        final clean = _sanitize(code, type);
+        final clean = code.trim().toUpperCase().replaceAll(RegExp(r'\s'), '');
         _savedValue = clean;
         _controller.text = clean;
-        _selectedType = type;
       }
       _isLoading = false;
     });
   }
 
   // ── 持久化：儲存 ──────────────────────────────────────────
-  Future<void> _save(String value, _BarcodeType type) async {
-    final clean = _sanitize(value, type);
+  Future<void> _save(String value) async {
+    // 儲存前 sanitize：移除前後空白與隱藏字元，統一大寫
+    final clean = value.trim().toUpperCase().replaceAll(RegExp(r'\s'), '');
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyCode, clean);
-    await prefs.setString(_keyType, type.name);
+    await prefs.setString(_keyType, _selectedType);
   }
 
   // ── 持久化：清除 ──────────────────────────────────────────
@@ -107,7 +87,10 @@ class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
               : '確定要刪除已儲存的會員條碼嗎？',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('刪除', style: TextStyle(color: Colors.red)),
@@ -121,17 +104,26 @@ class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
     await prefs.remove(_keyType);
     if (!mounted) return;
     _controller.clear();
-    setState(() { _savedValue = null; });
+    setState(() {
+      _savedValue = null;
+    });
   }
 
-  // ── OCR ───────────────────────────────────────────────────
+  // ── OCR ───────────────────────────────────────────────────────────────────
+
   Future<void> _pickAndScan(ImageSource source) async {
     setState(() => _isScanning = true);
     try {
-      final picked = await ImagePicker().pickImage(source: source, imageQuality: 90);
+      final picked = await ImagePicker().pickImage(
+        source: source,
+        imageQuality: 90,
+      );
       if (picked == null) return;
+
       final inputImage = InputImage.fromFilePath(picked.path);
-      final recognizer = TextRecognizer(script: TextRecognitionScript.latin);
+      final recognizer = TextRecognizer(
+        script: TextRecognitionScript.latin,
+      );
       try {
         final result = await recognizer.processImage(inputImage);
         final extracted = _extractBestMatch(result.text);
@@ -139,12 +131,13 @@ class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
           setState(() {
             _controller.text = extracted;
             _savedValue = null;
-            _selectedType = _guessType(extracted);
           });
         } else {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('未偵測到有效字串，請重試或手動輸入')),
+              const SnackBar(
+                content: Text('未偵測到有效字串，請重試或手動輸入'),
+              ),
             );
           }
         }
@@ -154,13 +147,16 @@ class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
     } catch (e) {
       debugPrint('❌ 掃描失敗: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('掃描失敗：$e')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('掃描失敗：$e')));
       }
     } finally {
       if (mounted) setState(() => _isScanning = false);
     }
   }
 
+  /// 從 OCR 結果中抓最長的連續英數段（A-Z a-z 0-9），至少 4 碼
   String _extractBestMatch(String text) {
     final matches = RegExp(r'[A-Za-z0-9]{4,}')
         .allMatches(text)
@@ -171,21 +167,13 @@ class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
     return matches.first;
   }
 
-  _BarcodeType _guessType(String value) {
-    if (RegExp(r'^\d{13}$').hasMatch(value)) return _BarcodeType.ean13;
-    return _BarcodeType.code128;
-  }
-
   // ── 格式驗證 ──────────────────────────────────────────────
-  String? _validateForType(String value) {
+  String? _validate(String value) {
     if (value.isEmpty) return '請輸入或掃描會員號碼';
-    if (_selectedType == _BarcodeType.ean13) {
-      if (!RegExp(r'^\d{13}$').hasMatch(value)) return 'EAN-13 需為純 13 位數字';
-    }
     return null;
   }
 
-  // ── 來源選單 ──────────────────────────────────────────────
+  // ── 來源選單 ──────────────────────────────────────────────────────────────
   Future<void> _showSourcePicker() async {
     await showModalBottomSheet<void>(
       context: context,
@@ -195,27 +183,42 @@ class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
           color: Colors.white,
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
-        padding: EdgeInsets.fromLTRB(20, 16, 20, MediaQuery.of(ctx).padding.bottom + 20),
+        padding: EdgeInsets.fromLTRB(
+          20,
+          16,
+          20,
+          MediaQuery.of(ctx).padding.bottom + 20,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 40, height: 4,
+              width: 40,
+              height: 4,
               margin: const EdgeInsets.only(bottom: 16),
-              decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
             _SourceTile(
               icon: Icons.camera_alt,
               title: '拍照辨識',
               subtitle: '開啟相機拍攝條碼',
-              onTap: () { Navigator.pop(ctx); _pickAndScan(ImageSource.camera); },
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickAndScan(ImageSource.camera);
+              },
             ),
             const SizedBox(height: 4),
             _SourceTile(
               icon: Icons.photo_library,
               title: '從相簿選取',
               subtitle: '選取已有的條碼圖片',
-              onTap: () { Navigator.pop(ctx); _pickAndScan(ImageSource.gallery); },
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickAndScan(ImageSource.gallery);
+              },
             ),
           ],
         ),
@@ -223,28 +226,32 @@ class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
     );
   }
 
-  // ── 確認 / 儲存 ───────────────────────────────────────────
+  // ── 確認 / 儲存 ───────────────────────────────────────────────────────────
   Future<void> _confirm() async {
-    final value = _sanitize(_controller.text, _selectedType);
-    final error = _validateForType(value);
+    final value = _controller.text.trim();
+    final error = _validate(value);
     if (error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error)),
+      );
       return;
     }
     FocusScope.of(context).unfocus();
-    await _save(value, _selectedType);
+    await _save(value);
     if (!mounted) return;
     setState(() => _savedValue = value);
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('✅ 會員條碼已儲存'), duration: Duration(seconds: 1)),
+      const SnackBar(
+        content: Text('✅ 會員條碼已儲存'),
+        duration: Duration(seconds: 1),
+      ),
     );
   }
 
-  // ── 條碼 Widget ───────────────────────────────────────────
+  // ── 條碼 Widget ───────────────────────────────────────────────────────────
+
   Widget _buildBarcodeSection() {
     if (_savedValue == null) return const SizedBox.shrink();
-    final isQR = _selectedType == _BarcodeType.qrCode;
-    final data = _sanitize(_savedValue!, _selectedType);
 
     return Card(
       elevation: 2,
@@ -258,43 +265,33 @@ class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
                 padding: const EdgeInsets.only(bottom: 6),
                 child: Text(
                   widget.brandName!,
-                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 15,
+                  ),
                 ),
               ),
             Text(
-              '請讓店員掃描以下條碼（${_selectedType.label}）',
+              '請讓店員掃描以下條碼',
               style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
             ),
             const SizedBox(height: 16),
-
-            // ✅ QR Code 用 barcode 套件產生 SVG
-            // ✅ 1D 條碼強制 Code 128B / EAN-13，不讓套件自動選子集
-            if (isQR)
-              () {
-                final svg = bc.Barcode.qrCode().toSvg(data, width: 180, height: 180);
-                return SvgPicture.string(svg, width: 180, height: 180);
-              }()
-            else
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  // ✅ Code 128 Auto：自動選擇 A/B/C 子集
-                  // 會員條碼各品牌格式不同，交由套件自動判斷最佳編碼
-                  final barcode = _selectedType == _BarcodeType.ean13
-                      ? bc.Barcode.ean13()
-                      : bc.Barcode.code128();
-                  final svg = barcode.toSvg(
-                    data,
-                    width: constraints.maxWidth - 32,
-                    height: 120,
-                    drawText: false,
-                  );
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: SvgPicture.string(svg),
-                  );
-                },
-              ),
-
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final barcodeData = _savedValue!
+                    .trim()
+                    .toUpperCase()
+                    .replaceAll(RegExp(r'\s'), '');
+                return BarcodeWidget(
+                  barcode: Barcode.code128(),
+                  data: barcodeData,
+                  width: constraints.maxWidth,
+                  height: 120,
+                  drawText: false,
+                  padding: const EdgeInsets.symmetric(horizontal: 32),
+                );
+              },
+            ),
             const SizedBox(height: 12),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -302,7 +299,11 @@ class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
                 Flexible(
                   child: Text(
                     _savedValue!,
-                    style: const TextStyle(fontFamily: 'monospace', fontSize: 14, letterSpacing: 1.5),
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 14,
+                      letterSpacing: 1.5,
+                    ),
                     textAlign: TextAlign.center,
                   ),
                 ),
@@ -312,12 +313,19 @@ class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
                   onPressed: () {
                     Clipboard.setData(ClipboardData(text: _savedValue!));
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('已複製'), duration: Duration(seconds: 1)),
+                      const SnackBar(
+                        content: Text('已複製'),
+                        duration: Duration(seconds: 1),
+                      ),
                     );
                   },
                 ),
                 IconButton(
-                  icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
+                  icon: const Icon(
+                    Icons.delete_outline,
+                    size: 18,
+                    color: Colors.red,
+                  ),
                   tooltip: '刪除',
                   onPressed: _deleteSaved,
                 ),
@@ -334,41 +342,20 @@ class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
     );
   }
 
-  // ── 格式選擇列 ────────────────────────────────────────────
-  Widget _buildTypeSelector() {
-    return SizedBox(
-      height: 36,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        children: _BarcodeType.values.map((type) {
-          final selected = _selectedType == type;
-          return Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: ChoiceChip(
-              label: Text(type.label),
-              selected: selected,
-              onSelected: (_) => setState(() {
-                _selectedType = type;
-                _savedValue = null;
-              }),
-              tooltip: type.description,
-            ),
-          );
-        }).toList(),
-      ),
-    );
-  }
-
-  // ── 主畫面 ────────────────────────────────────────────────
+  // ── 主畫面 ────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator.adaptive()));
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator.adaptive()),
+      );
     }
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.brandName != null ? '${widget.brandName} 會員條碼' : '會員條碼'),
+        title: Text(
+          widget.brandName != null ? '${widget.brandName} 會員條碼' : '會員條碼',
+        ),
         centerTitle: true,
       ),
       body: GestureDetector(
@@ -378,38 +365,31 @@ class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('條碼格式', style: TextStyle(fontSize: 13, color: Colors.grey)),
-              const SizedBox(height: 8),
-              _buildTypeSelector(),
-              const SizedBox(height: 4),
-              Text(_selectedType.description, style: TextStyle(fontSize: 11, color: Colors.grey[500])),
-              const SizedBox(height: 20),
+              // ── 輸入欄 + 掃描按鈕 ─────────────────────────
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Expanded(
                     child: TextField(
                       controller: _controller,
-                      keyboardType: _selectedType == _BarcodeType.ean13
-                          ? TextInputType.number
-                          : TextInputType.visiblePassword,
+                      keyboardType: TextInputType.visiblePassword,
                       inputFormatters: [
-                        if (_selectedType == _BarcodeType.ean13)
-                          FilteringTextInputFormatter.digitsOnly
-                        else
-                          FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9\-. /+$%]')),
-                        if (_selectedType == _BarcodeType.ean13)
-                          LengthLimitingTextInputFormatter(13),
+                        FilteringTextInputFormatter.allow(
+                          RegExp(r'[A-Za-z0-9\-. /+$%]'),
+                        ),
                       ],
                       decoration: InputDecoration(
                         labelText: '會員號碼',
-                        hintText: _selectedType == _BarcodeType.ean13 ? '13 位數字' : '掃描或手動輸入',
+                        hintText: '掃描或手動輸入',
                         border: const OutlineInputBorder(),
                         prefixIcon: const Icon(Icons.person_outline),
                         suffixIcon: _controller.text.isNotEmpty
                             ? IconButton(
                                 icon: const Icon(Icons.clear),
-                                onPressed: () { _controller.clear(); setState(() {}); },
+                                onPressed: () {
+                                  _controller.clear();
+                                  setState(() {});
+                                },
                               )
                             : null,
                       ),
@@ -420,8 +400,11 @@ class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
                   const SizedBox(width: 12),
                   _isScanning
                       ? const SizedBox(
-                          width: 52, height: 52,
-                          child: Center(child: CircularProgressIndicator(strokeWidth: 2.5)),
+                          width: 52,
+                          height: 52,
+                          child: Center(
+                            child: CircularProgressIndicator(strokeWidth: 2.5),
+                          ),
                         )
                       : Material(
                           color: Colors.blue,
@@ -430,19 +413,27 @@ class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
                             borderRadius: BorderRadius.circular(12),
                             onTap: _showSourcePicker,
                             child: const SizedBox(
-                              width: 52, height: 52,
-                              child: Icon(Icons.qr_code_scanner, color: Colors.white, size: 26),
+                              width: 52,
+                              height: 52,
+                              child: Icon(
+                                Icons.qr_code_scanner,
+                                color: Colors.white,
+                                size: 26,
+                              ),
                             ),
                           ),
                         ),
                 ],
               ),
+
               const SizedBox(height: 8),
               Text(
                 '點右側按鈕可拍照自動辨識條碼，支援 A-Z / a-z / 0-9',
                 style: TextStyle(fontSize: 11, color: Colors.grey[500]),
               ),
               const SizedBox(height: 16),
+
+              // ── 儲存按鈕 ──────────────────────────────────
               SizedBox(
                 width: double.infinity,
                 child: FilledButton.icon(
@@ -452,6 +443,8 @@ class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
                 ),
               ),
               const SizedBox(height: 28),
+
+              // ── 條碼顯示區 ────────────────────────────────
               _buildBarcodeSection(),
             ],
           ),
