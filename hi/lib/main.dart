@@ -83,17 +83,27 @@ class _RootScreenState extends State<RootScreen> {
       final path = p.join(await getDatabasesPath(), 'pay_helper.db');
       Database? db;
 
+      // 如果資料庫不存在，則進行初始化
       if (!await databaseExists(path)) {
-        final copied = await _copyPrebuiltDatabase(path, 'assets/brand_name.db');
+        final copied = await _copyPrebuiltDatabase(path, 'lib/assets/brand_name.db');
         if (!copied) {
           db = await openDatabase(path, version: 1, onCreate: (db, ver) async {
-            final sql = await rootBundle.loadString('lib/brand_name.sql');
-            await _executeSqlScript(db, sql);
+            // 執行基礎品牌資料
+            await _loadAndExecuteSql(db, 'lib/assets/brand_name.sql');
+            // 執行您提供的所有支付與規則資料
+            await _loadAndExecuteSql(db, 'lib/assets/Payment/reward_rules.sql');
+            await _loadAndExecuteSql(db, 'lib/assets/Payment/discount_rules.sql');
+            await _loadAndExecuteSql(db, 'lib/assets/Payment/rule_store_map.sql');
+            await _loadAndExecuteSql(db, 'lib/assets/Payment/payment_options.sql');
           });
         }
       }
+      
       db ??= await openDatabase(path, version: 1);
-      await _ensureBrandNameTable(db);
+      
+      // 確保必要的表都存在
+      await _ensureTables(db);
+      
       final rows = await db.query('brand_name');
 
       if (mounted) {
@@ -107,6 +117,15 @@ class _RootScreenState extends State<RootScreen> {
     }
   }
 
+  Future<void> _loadAndExecuteSql(Database db, String assetPath) async {
+    try {
+      final sql = await rootBundle.loadString(assetPath);
+      await _executeSqlScript(db, sql);
+    } catch (e) {
+      debugPrint('⚠️ 無法執行 SQL 腳本 ($assetPath): $e');
+    }
+  }
+
   Future<bool> _copyPrebuiltDatabase(String target, String asset) async {
     try {
       final data = await rootBundle.load(asset);
@@ -116,18 +135,27 @@ class _RootScreenState extends State<RootScreen> {
       await file.writeAsBytes(bytes, flush: true);
       return true;
     } catch (e) {
-      debugPrint('⚠️ 無法複製預建 DB: $e');
+      debugPrint('⚠️ 無法複製預建 DB ($asset): $e');
       return false;
     }
   }
 
-  Future<void> _ensureBrandNameTable(Database db) async {
-    final tables = await db.rawQuery(
+  Future<void> _ensureTables(Database db) async {
+    // 檢查 brand_name 表
+    final brandTable = await db.rawQuery(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='brand_name'",
     );
-    if (tables.isEmpty) {
-      final sql = await rootBundle.loadString('lib/brand_name.sql');
-      await _executeSqlScript(db, sql);
+    if (brandTable.isEmpty) {
+      await _loadAndExecuteSql(db, 'lib/assets/brand_name.sql');
+    }
+
+    // 檢查 discount_rules 表（HomeScreen 需要）
+    final discountTable = await db.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='discount_rules'",
+    );
+    if (discountTable.isEmpty) {
+      await _loadAndExecuteSql(db, 'lib/assets/Payment/discount_rules.sql');
+      await _loadAndExecuteSql(db, 'lib/assets/Payment/rule_store_map.sql');
     }
   }
 
@@ -137,7 +165,9 @@ class _RootScreenState extends State<RootScreen> {
         .map((s) => s.trim())
         .where((s) => s.isNotEmpty);
     final batch = db.batch();
-    for (final s in stmts) batch.execute(s);
+    for (final s in stmts) {
+      batch.execute(s);
+    }
     await batch.commit(noResult: true);
   }
 
