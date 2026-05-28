@@ -513,29 +513,25 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Widget _slotLabel(String id, bool isActive) {
-    final color = Colors.white;
-    final bigSize   = isActive ? 15.0 : 13.0;
-    final smallSize = isActive ? 26.0 : 22.0;
+    final size = isActive ? 42.0 : 34.0;
+    String assetPath;
     switch (id) {
       case 'fm':
-        return Text('全家',
-            style: TextStyle(fontSize: bigSize,
-                fontWeight: FontWeight.w900, color: color));
+        assetPath = 'assets/images/fm.png';
+        break;
       case 'seven':
-        return Text('7',
-            style: TextStyle(fontSize: smallSize,
-                fontWeight: FontWeight.w900, color: color, height: 1));
+        assetPath = 'assets/images/7-11.png';
+        break;
       case 'hilife':
-        return Text('Hi',
-            style: TextStyle(fontSize: bigSize,
-                fontWeight: FontWeight.w900, color: color));
+        assetPath = 'assets/images/hl.png';
+        break;
       case 'ok':
-        return Text('OK',
-            style: TextStyle(fontSize: bigSize,
-                fontWeight: FontWeight.w900, color: color));
+        assetPath = 'assets/images/ok.png';
+        break;
       default:
-        return Icon(Icons.store, color: color, size: isActive ? 22 : 18);
+        return Icon(Icons.store, color: Colors.white, size: isActive ? 22 : 18);
     }
+    return Image.asset(assetPath, width: size, height: size, fit: BoxFit.contain);
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -936,81 +932,24 @@ class _HomeScreenState extends State<HomeScreen>
   // ════════════════════════════════════════════════════════════════════════
 
   Widget _buildStoreLogo(String id) {
+    String assetPath;
     switch (id) {
       case 'fm':
-        return Column(children: [
-          Container(
-            width: 40, height: 14,
-            decoration: const BoxDecoration(
-              color: Color(0xFF00B8A9),
-              borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(3), topRight: Radius.circular(3)),
-            ),
-            child: const Center(
-              child: Text('Family',
-                  style: TextStyle(fontSize: 6,
-                      fontWeight: FontWeight.w900, color: Colors.white)),
-            ),
-          ),
-          Container(
-            width: 40, height: 18,
-            decoration: const BoxDecoration(
-              color: Color(0xFF003087),
-              borderRadius: BorderRadius.only(
-                  bottomLeft: Radius.circular(3),
-                  bottomRight: Radius.circular(3)),
-            ),
-            child: const Center(
-              child: Text('FamilyMart',
-                  style: TextStyle(fontSize: 5,
-                      fontWeight: FontWeight.w800, color: Colors.white)),
-            ),
-          ),
-        ]);
+        assetPath = 'assets/images/fm.png';
+        break;
       case 'seven':
-        return SizedBox(
-          width: 36, height: 36,
-          child: Stack(children: [
-            Positioned.fill(child: ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: Column(children: [
-                Expanded(child: Container(color: const Color(0xFF2E7D32))),
-                Expanded(child: Container(color: const Color(0xFFEF6C00))),
-                Expanded(child: Container(color: const Color(0xFFC62828))),
-              ]),
-            )),
-            const Center(child: Text('7',
-                style: TextStyle(fontSize: 22,
-                    fontWeight: FontWeight.w900, color: Colors.white, height: 1))),
-          ]),
-        );
+        assetPath = 'assets/images/7-11.png';
+        break;
       case 'hilife':
-        return Container(
-          width: 36, height: 36,
-          decoration: const BoxDecoration(
-              color: Color(0xFFE53935), shape: BoxShape.circle),
-          child: const Center(
-            child: Text('Hi',
-                style: TextStyle(fontSize: 11,
-                    fontWeight: FontWeight.w900, color: Colors.white)),
-          ),
-        );
+        assetPath = 'assets/images/hl.png';
+        break;
       case 'ok':
-        return Container(
-          width: 40, height: 26,
-          decoration: BoxDecoration(
-              color: const Color(0xFFE53935),
-              borderRadius: BorderRadius.circular(4)),
-          child: const Center(
-            child: Text('OK',
-                style: TextStyle(fontSize: 14,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.white, letterSpacing: -0.5)),
-          ),
-        );
+        assetPath = 'assets/images/ok.png';
+        break;
       default:
         return const Icon(Icons.store, size: 28);
     }
+    return Image.asset(assetPath, fit: BoxFit.contain);
   }
 
   // ════════════════════════════════════════════════════════════════════════
