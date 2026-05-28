@@ -389,19 +389,26 @@ class _HomeScreenState extends State<HomeScreen>
           if (_permissionMessage.isNotEmpty)
             Positioned(
               top: 0, left: 0, right: 0,
-              child: Material(
-                color: Colors.orange.shade50,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: Row(children: [
-                    const Icon(Icons.warning_amber_rounded,
-                        color: Colors.orange, size: 16),
-                    const SizedBox(width: 8),
-                    Expanded(child: Text(_permissionMessage,
-                        style: const TextStyle(fontSize: 11, color: Colors.orange))),
-                  ]),
-                ),
-              ),
+              child: Map<String, dynamic>.from(
+                {
+                  'color': Colors.orange.shade50,
+                  'padding': const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                },
+              ).isNotEmpty
+                  ? Material(
+                      color: Colors.orange.shade50,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        child: Row(children: [
+                          const Icon(Icons.warning_amber_rounded,
+                              color: Colors.orange, size: 16),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(_permissionMessage,
+                              style: const TextStyle(fontSize: 11, color: Colors.orange))),
+                        ]),
+                      ),
+                    )
+                  : const SizedBox.shrink(),
             ),
 
           !widget.dbReady
@@ -517,16 +524,16 @@ class _HomeScreenState extends State<HomeScreen>
     String assetPath;
     switch (id) {
       case 'fm':
-        assetPath = 'assets/images/fm.png';
+        assetPath = 'lib/assets/images/fm.png';
         break;
       case 'seven':
-        assetPath = 'assets/images/7-11.png';
+        assetPath = 'lib/assets/images/7-11.png';
         break;
       case 'hilife':
-        assetPath = 'assets/images/hl.png';
+        assetPath = 'lib/assets/images/hl.png';
         break;
       case 'ok':
-        assetPath = 'assets/images/ok.png';
+        assetPath = 'lib/assets/images/ok.png';
         break;
       default:
         return Icon(Icons.store, color: Colors.white, size: isActive ? 22 : 18);
@@ -935,16 +942,16 @@ class _HomeScreenState extends State<HomeScreen>
     String assetPath;
     switch (id) {
       case 'fm':
-        assetPath = 'assets/images/fm.png';
+        assetPath = 'lib/assets/images/fm.png';
         break;
       case 'seven':
-        assetPath = 'assets/images/7-11.png';
+        assetPath = 'lib/assets/images/7-11.png';
         break;
       case 'hilife':
-        assetPath = 'assets/images/hl.png';
+        assetPath = 'lib/assets/images/hl.png';
         break;
       case 'ok':
-        assetPath = 'assets/images/ok.png';
+        assetPath = 'lib/assets/images/ok.png';
         break;
       default:
         return const Icon(Icons.store, size: 28);
