@@ -58,3 +58,7 @@ flutter:
     - assets/Payment/rule_store_map.sql
     - assets/Payment/stores.sql
     - assets/Payment/payment_options.sql
+    - assets/images/7-11.png
+    - assets/images/fm.png
+    - assets/images/hl.png
+    - assets/images/ok.png
