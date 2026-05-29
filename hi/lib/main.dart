@@ -24,15 +24,12 @@ void main() async {
     return true;
   };
 
-  // 初始化全局狀態
-  await initializeAllNotifiers();
-
   runApp(const MyApp());
 }
 
-// ════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
 // MyApp
-// ════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -58,9 +55,9 @@ class MyApp extends StatelessWidget {
   }
 }
 
-// ════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
 // RootScreen — 底部導覽 3 Tab
-// ════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
 
 class RootScreen extends StatefulWidget {
   const RootScreen({super.key});
@@ -77,6 +74,7 @@ class _RootScreenState extends State<RootScreen> {
   @override
   void initState() {
     super.initState();
+    loadPayMethods();
     WidgetsBinding.instance.addPostFrameCallback((_) => _initDatabase());
   }
 
@@ -89,15 +87,15 @@ class _RootScreenState extends State<RootScreen> {
       // await deleteDatabase(path);
 
       if (!await databaseExists(path)) {
-        final copied = await _copyPrebuiltDatabase(path, 'lib/assets/brand_name.db');
+        final copied = await _copyPrebuiltDatabase(path, 'assets/brand_name.db');
         if (!copied) {
           db = await openDatabase(path, version: 1, onCreate: (db, ver) async {
             // 執行原始資料
-            await _loadAndExecuteSql(db, 'lib/assets/brand_name.sql');
-            await _loadAndExecuteSql(db, 'lib/assets/Payment/reward_rules.sql');
-            await _loadAndExecuteSql(db, 'lib/assets/Payment/discount_rules.sql');
-            await _loadAndExecuteSql(db, 'lib/assets/Payment/rule_store_map.sql');
-            await _loadAndExecuteSql(db, 'lib/assets/Payment/payment_options.sql');
+            await _loadAndExecuteSql(db, 'lib/brand_name.sql');
+            await _loadAndExecuteSql(db, 'lib/Payment/reward_rules.sql');
+            await _loadAndExecuteSql(db, 'lib/Payment/discount_rules.sql');
+            await _loadAndExecuteSql(db, 'lib/Payment/rule_store_map.sql');
+            await _loadAndExecuteSql(db, 'lib/Payment/payment_options.sql');
             
             // 執行新資料
             await _loadAndExecuteSql(db, 'lib/assets/payment/等級.sql');
