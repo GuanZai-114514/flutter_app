@@ -41,7 +41,6 @@ class _HomeScreenState extends State<HomeScreen>
   static const String _apiKey = 'AIzaSyAly-Vst9UhgyUmQTKFdaCtwNEbNBIzQu4';
 
   // ── 4 個圓圈槽（初始預設順序） ───────────────────────────────────────────
-  // index 0 = 最左 = 當前選中（active）
   List<String> _slotOrder = ['fm', 'seven', 'hilife', 'ok'];
   String get _activeStoreId => _slotOrder.first;
 
@@ -62,6 +61,11 @@ class _HomeScreenState extends State<HomeScreen>
   // ── 旋轉動畫 ─────────────────────────────────────────────────────────────
   late AnimationController _spinCtrl;
 
+  // ── 收回手機後的支付提示倒數 ─────────────────────────────────────────────
+  Timer? _payPromptTimer;
+  int _payPromptCountdown = 5;
+  bool _showPayPrompt = false;
+
   @override
   void initState() {
     super.initState();
@@ -81,6 +85,7 @@ class _HomeScreenState extends State<HomeScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _accelSub?.cancel();
+    _payPromptTimer?.cancel();
     _spinCtrl.dispose();
     super.dispose();
   }
@@ -93,7 +98,7 @@ class _HomeScreenState extends State<HomeScreen>
     _accelSub = accelerometerEventStream(
       samplingPeriod: SensorInterval.normalInterval,
     ).listen((event) {
-      final shouldTilt   = event.y < -3.0;
+      final shouldTilt = event.y < -3.0;
       final shouldUntilt = event.y > -1.5;
       if (shouldTilt == _isTilted) return;
       final now = DateTime.now();
@@ -103,9 +108,93 @@ class _HomeScreenState extends State<HomeScreen>
       if (shouldTilt && !_isTilted) {
         if (mounted) setState(() => _isTilted = true);
       } else if (shouldUntilt && _isTilted) {
-        if (mounted) setState(() => _isTilted = false);
+        if (mounted) {
+          setState(() => _isTilted = false);
+          _triggerPayPrompt(); // 收回時觸發倒數提示
+        }
       }
     });
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // 收回手機後的最佳支付提示
+  // ════════════════════════════════════════════════════════════════════════
+
+  void _triggerPayPrompt() {
+    final discounts = _getBestDiscountsFor(_activeStoreId);
+    if (discounts.isEmpty) return;
+
+    _payPromptTimer?.cancel();
+    setState(() {
+      _showPayPrompt = true;
+      _payPromptCountdown = 5;
+    });
+
+    _payPromptTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      setState(() => _payPromptCountdown--);
+      if (_payPromptCountdown <= 0) {
+        t.cancel();
+        _launchTopPay();
+      }
+    });
+  }
+
+  void _cancelPayPrompt() {
+    _payPromptTimer?.cancel();
+    if (mounted) setState(() => _showPayPrompt = false);
+  }
+
+  Future<void> _launchTopPay() async {
+    if (mounted) setState(() => _showPayPrompt = false);
+
+    final discounts = _getBestDiscountsFor(_activeStoreId);
+    if (discounts.isEmpty) return;
+
+    final topDiscount = discounts.first;
+    final platformId = discountSoftwareToId(topDiscount.paymentSoftware);
+    final platform = platformId != null ? platformById(platformId) : null;
+
+    if (platform != null) {
+      await _launchPayApp(platform);
+    } else {
+      // fallback：用 paymentSoftware 名稱查 hardcoded scheme
+      final scheme = _hardcodedScheme(topDiscount.paymentSoftware);
+      if (scheme != null) {
+        final uri = Uri.parse(scheme);
+        try {
+          if (await canLaunchUrl(uri)) {
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+          }
+        } catch (e) {
+          debugPrint('❌ hardcoded scheme 失敗: $e');
+        }
+      }
+    }
+  }
+
+  /// 若 DB 的 paymentSoftware 名稱與 platformById 對不到，用此 fallback
+  String? _hardcodedScheme(String softwareName) {
+    final n = softwareName.replaceAll(' ', '').toLowerCase();
+    if (n.contains('全支付') || n.contains('pxpay')) {
+      return 'com.pxpay.plus://zjdja';
+    }
+    if (n.contains('悠遊付') || n.contains('easycard')) {
+      return 'tw.com.easycard.easycardwallet://paymentCode';
+    }
+    if (n.contains('linepay') || n.contains('line pay') || n.contains('line')) {
+      return 'line://pay/generateQR';
+    }
+    if (n.contains('台灣pay') || n.contains('twmp') || n.contains('台灣支付')) {
+      return 'twmpshortcut://?type=payment';
+    }
+    if (n.contains('街口') || n.contains('jkos')) {
+      return 'jkos://showQRCode';
+    }
+    return null;
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -120,7 +209,10 @@ class _HomeScreenState extends State<HomeScreen>
       final tables = await db.rawQuery(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='discount_rules'",
       );
-      if (tables.isEmpty) { await db.close(); return; }
+      if (tables.isEmpty) {
+        await db.close();
+        return;
+      }
       final discountRows = await db.query('discount_rules');
       final rules = discountRows.map(DiscountRule.fromMap).toList();
       final mapRows = await db.rawQuery(
@@ -129,7 +221,7 @@ class _HomeScreenState extends State<HomeScreen>
       await db.close();
       final Map<int, List<DiscountRule>> byStore = {};
       for (final row in mapRows) {
-        final ruleId  = (row['rule_id']  as num).toInt();
+        final ruleId = (row['rule_id'] as num).toInt();
         final storeId = (row['store_id'] as num).toInt();
         final rule = rules.where((r) => r.id == ruleId).toList();
         if (rule.isNotEmpty) {
@@ -144,11 +236,16 @@ class _HomeScreenState extends State<HomeScreen>
 
   int _storeDbId(String storeId) {
     switch (storeId) {
-      case 'fm':     return 1;
-      case 'seven':  return 2;
-      case 'hilife': return 3;
-      case 'ok':     return 4;
-      default:       return 1;
+      case 'fm':
+        return 1;
+      case 'seven':
+        return 2;
+      case 'hilife':
+        return 3;
+      case 'ok':
+        return 4;
+      default:
+        return 1;
     }
   }
 
@@ -169,20 +266,40 @@ class _HomeScreenState extends State<HomeScreen>
   // ════════════════════════════════════════════════════════════════════════
 
   Future<void> _launchPayApp(PayPlatform platform) async {
-    final scheme = Platform.isIOS ? platform.iosScheme : platform.androidScheme;
-    if (scheme != null) {
+    final scheme =
+        Platform.isIOS ? platform.iosScheme : platform.androidScheme;
+
+    if (scheme != null && scheme.isNotEmpty) {
       final uri = Uri.parse(scheme);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-        return;
+      try {
+        if (await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+          return;
+        }
+      } catch (e) {
+        debugPrint('❌ scheme 開啟失敗 (${platform.id}): $e');
       }
     }
-    if (platform.universalUrl != null) {
-      await launchUrl(Uri.parse(platform.universalUrl!),
-          mode: LaunchMode.externalApplication);
-    } else if (mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('無法開啟 ${platform.label}')));
+
+    if (platform.universalUrl != null && platform.universalUrl!.isNotEmpty) {
+      try {
+        final webUri = Uri.parse(platform.universalUrl!);
+        if (await canLaunchUrl(webUri)) {
+          await launchUrl(webUri, mode: LaunchMode.externalApplication);
+          return;
+        }
+      } catch (e) {
+        debugPrint('❌ universalUrl 開啟失敗 (${platform.id}): $e');
+      }
+    }
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('無法開啟 ${platform.label}，請確認已安裝該 App'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     }
   }
 
@@ -217,9 +334,11 @@ class _HomeScreenState extends State<HomeScreen>
       await _updatePermissionMessage();
 
       if (!await Geolocator.isLocationServiceEnabled()) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('請先啟用定位服務')),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('請先啟用定位服務')),
+          );
+        }
         return;
       }
 
@@ -231,7 +350,8 @@ class _HomeScreenState extends State<HomeScreen>
           gPerm == LocationPermission.deniedForever) return;
 
       final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.best),
+        locationSettings:
+            const LocationSettings(accuracy: LocationAccuracy.best),
       );
       final names = await _fetchPlaces(pos.latitude, pos.longitude);
 
@@ -242,7 +362,6 @@ class _HomeScreenState extends State<HomeScreen>
         return;
       }
 
-      // 依距離順序匹配，最多 4 個不重複超商
       final newSlot = <String>[];
       final newFullNames = <String, String>{};
 
@@ -265,7 +384,6 @@ class _HomeScreenState extends State<HomeScreen>
       if (mounted) {
         setState(() {
           if (newSlot.isNotEmpty) {
-            // 補齊到 4 個（用原有槽裡沒出現的補）
             for (final s in _slotOrder) {
               if (!newSlot.contains(s) && newSlot.length < 4) newSlot.add(s);
             }
@@ -281,8 +399,10 @@ class _HomeScreenState extends State<HomeScreen>
       }
     } catch (e) {
       debugPrint('❌ 偵測失敗: $e');
-      if (mounted) ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('偵測失敗：$e')));
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('偵測失敗：$e')));
+      }
     } finally {
       if (mounted) {
         _spinCtrl.stop();
@@ -294,33 +414,41 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<List<String>> _fetchPlaces(double lat, double lng) async {
     try {
-      final res = await Dio().post(
-        'https://places.googleapis.com/v1/places:searchNearby',
-        options: Options(
-          headers: {
-            'X-Goog-Api-Key': _apiKey,
-            'X-Goog-FieldMask': 'places.displayName',
-          },
-          connectTimeout: const Duration(seconds: 10),
-          receiveTimeout: const Duration(seconds: 10),
-        ),
-        data: {
-          'includedTypes': [
-            'convenience_store', 'cafe', 'restaurant', 'drugstore', 'supermarket'
-          ],
-          'maxResultCount': 10,
-          'languageCode': 'zh-TW',
-          'locationRestriction': {
-            'circle': {
-              'center': {'latitude': lat, 'longitude': lng},
-              'radius': 1000.0,
-            }
-          },
-          'rankPreference': 'DISTANCE',
-        },
-      ).timeout(const Duration(seconds: 15));
+      final res = await Dio()
+          .post(
+            'https://places.googleapis.com/v1/places:searchNearby',
+            options: Options(
+              headers: {
+                'X-Goog-Api-Key': _apiKey,
+                'X-Goog-FieldMask': 'places.displayName',
+              },
+              connectTimeout: const Duration(seconds: 10),
+              receiveTimeout: const Duration(seconds: 10),
+            ),
+            data: {
+              'includedTypes': [
+                'convenience_store',
+                'cafe',
+                'restaurant',
+                'drugstore',
+                'supermarket'
+              ],
+              'maxResultCount': 10,
+              'languageCode': 'zh-TW',
+              'locationRestriction': {
+                'circle': {
+                  'center': {'latitude': lat, 'longitude': lng},
+                  'radius': 1000.0,
+                }
+              },
+              'rankPreference': 'DISTANCE',
+            },
+          )
+          .timeout(const Duration(seconds: 15));
       final places = res.data['places'] as List? ?? [];
-      return places.map((p) => p['displayName']['text'].toString()).toList();
+      return places
+          .map((p) => p['displayName']['text'].toString())
+          .toList();
     } catch (e) {
       debugPrint('❌ API 錯誤: $e');
       return [];
@@ -330,7 +458,9 @@ class _HomeScreenState extends State<HomeScreen>
   String? _matchStoreId(String name) {
     final n = name.replaceAll(' ', '').toLowerCase();
     if (n.contains('全家') || n.contains('familymart')) return 'fm';
-    if (n.contains('7-eleven') || n.contains('7eleven') || n.contains('711')) return 'seven';
+    if (n.contains('7-eleven') ||
+        n.contains('7eleven') ||
+        n.contains('711')) return 'seven';
     if (n.contains('萊爾富') || n.contains('hilife')) return 'hilife';
     if (n.contains('ok') || n.contains('ok超商')) return 'ok';
     return null;
@@ -341,7 +471,7 @@ class _HomeScreenState extends State<HomeScreen>
   // ════════════════════════════════════════════════════════════════════════
 
   void _onSlotTap(int index) {
-    if (index == 0) return; // 已是第一個，不動
+    if (index == 0) return;
     setState(() {
       final tapped = _slotOrder[index];
       _slotOrder.removeAt(index);
@@ -366,7 +496,6 @@ class _HomeScreenState extends State<HomeScreen>
         elevation: 0,
         scrolledUnderElevation: 0,
         actions: [
-          // 旋轉定位圖標
           GestureDetector(
             onTap: _isLoading ? null : _startDetection,
             child: Padding(
@@ -388,27 +517,28 @@ class _HomeScreenState extends State<HomeScreen>
           // 權限提示橫幅
           if (_permissionMessage.isNotEmpty)
             Positioned(
-              top: 0, left: 0, right: 0,
-              child: Map<String, dynamic>.from(
-                {
-                  'color': Colors.orange.shade50,
-                  'padding': const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                },
-              ).isNotEmpty
-                  ? Material(
-                      color: Colors.orange.shade50,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        child: Row(children: [
-                          const Icon(Icons.warning_amber_rounded,
-                              color: Colors.orange, size: 16),
-                          const SizedBox(width: 8),
-                          Expanded(child: Text(_permissionMessage,
-                              style: const TextStyle(fontSize: 11, color: Colors.orange))),
-                        ]),
+              top: 0,
+              left: 0,
+              right: 0,
+              child: Material(
+                color: Colors.orange.shade50,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 8),
+                  child: Row(children: [
+                    const Icon(Icons.warning_amber_rounded,
+                        color: Colors.orange, size: 16),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _permissionMessage,
+                        style: const TextStyle(
+                            fontSize: 11, color: Colors.orange),
                       ),
-                    )
-                  : const SizedBox.shrink(),
+                    ),
+                  ]),
+                ),
+              ),
             ),
 
           !widget.dbReady
@@ -417,6 +547,9 @@ class _HomeScreenState extends State<HomeScreen>
 
           // 傾斜 Overlay
           if (_isTilted) _buildTiltOverlay(),
+
+          // 收回手機後的支付跳轉提示
+          if (_showPayPrompt) _buildPayPromptOverlay(),
         ],
       ),
     );
@@ -425,16 +558,11 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _buildBody() {
     return Column(
       children: [
-        // ── 4 個圓圈 ───────────────────────────────────────────────────
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
           child: _buildStoreSlots(),
         ),
-
-        // ── 中央資訊卡 + 其他支付（可捲動）────────────────────────────
         Expanded(child: _buildInfoSection()),
-
-        // ── 底部「會員 & 載具條碼」按鈕 ───────────────────────────────
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
           child: _buildMemberPill(),
@@ -457,11 +585,10 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _buildSlotCircle(int index) {
     if (index >= _slotOrder.length) return const SizedBox(width: 72);
 
-    final storeId  = _slotOrder[index];
+    final storeId = _slotOrder[index];
     final isActive = index == 0;
     final hasSpecial = _hasSpecialDiscount(storeId);
 
-    // 藍色漸層 = 平時回饋，紅色漸層 = 特殊回饋
     final gradColors = hasSpecial
         ? [const Color(0xFFFF6B6B), const Color(0xFFD32F2F)]
         : [const Color(0xFF64B5F6), const Color(0xFF1565C0)];
@@ -475,7 +602,8 @@ class _HomeScreenState extends State<HomeScreen>
           AnimatedContainer(
             duration: const Duration(milliseconds: 280),
             curve: Curves.easeOut,
-            width: size, height: size,
+            width: size,
+            height: size,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               gradient: LinearGradient(
@@ -507,7 +635,8 @@ class _HomeScreenState extends State<HomeScreen>
             duration: const Duration(milliseconds: 200),
             style: TextStyle(
               fontSize: isActive ? 11 : 10,
-              fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
+              fontWeight:
+                  isActive ? FontWeight.w700 : FontWeight.w500,
               color: isActive
                   ? const Color(0xFF111111)
                   : const Color(0xFF888888),
@@ -536,9 +665,11 @@ class _HomeScreenState extends State<HomeScreen>
         assetPath = 'lib/assets/images/ok.png';
         break;
       default:
-        return Icon(Icons.store, color: Colors.white, size: isActive ? 22 : 18);
+        return Icon(Icons.store,
+            color: Colors.white, size: isActive ? 22 : 18);
     }
-    return Image.asset(assetPath, width: size, height: size, fit: BoxFit.contain);
+    return Image.asset(assetPath,
+        width: size, height: size, fit: BoxFit.contain);
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -546,11 +677,10 @@ class _HomeScreenState extends State<HomeScreen>
   // ════════════════════════════════════════════════════════════════════════
 
   Widget _buildInfoSection() {
-    final storeId     = _activeStoreId;
-    final store       = kStores[storeId]!;
-    final discounts   = _getBestDiscountsFor(storeId);
+    final storeId = _activeStoreId;
+    final store = kStores[storeId]!;
+    final discounts = _getBestDiscountsFor(storeId);
     final topDiscount = discounts.isNotEmpty ? discounts.first : null;
-    // 其他支付：最多 4 個，比第 1 名回饋低的
     final otherDiscounts = discounts.length > 1
         ? discounts.sublist(1, discounts.length > 5 ? 5 : discounts.length)
         : <DiscountRule>[];
@@ -562,8 +692,6 @@ class _HomeScreenState extends State<HomeScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-
-          // ── 主資訊框（店名 + 推薦支付）────────────────────────────────
           Container(
             decoration: BoxDecoration(
               color: Colors.white,
@@ -578,14 +706,13 @@ class _HomeScreenState extends State<HomeScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-
-                // 店名列
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
                   child: Row(
                     children: [
                       SizedBox(
-                          width: 46, height: 46,
+                          width: 46,
+                          height: 46,
                           child: _buildStoreLogo(storeId)),
                       const SizedBox(width: 12),
                       Expanded(
@@ -604,15 +731,14 @@ class _HomeScreenState extends State<HomeScreen>
                             if (branchName != null)
                               Text(store.name,
                                   style: const TextStyle(
-                                      fontSize: 11, color: Color(0xFF888888))),
+                                      fontSize: 11,
+                                      color: Color(0xFF888888))),
                           ],
                         ),
                       ),
                     ],
                   ),
                 ),
-
-                // 推薦支付標題
                 const Padding(
                   padding: EdgeInsets.fromLTRB(16, 12, 16, 6),
                   child: Text('推薦支付軟體',
@@ -621,8 +747,6 @@ class _HomeScreenState extends State<HomeScreen>
                           fontWeight: FontWeight.w500,
                           color: Color(0xFF888888))),
                 ),
-
-                // 最佳折扣卡
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                   child: topDiscount != null
@@ -635,7 +759,6 @@ class _HomeScreenState extends State<HomeScreen>
 
           const SizedBox(height: 14),
 
-          // ── 其他可用支付（橫向捲動，最多 4 個）────────────────────────
           const Text('其他可用支付軟體',
               style: TextStyle(
                   fontSize: 12,
@@ -654,9 +777,10 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _buildTopDiscountCard(DiscountRule rule) {
     final platformId = discountSoftwareToId(rule.paymentSoftware);
-    final platform   = platformId != null ? platformById(platformId) : null;
-    final isSpecial  = rule.isSpecial;
-    final accent = isSpecial ? const Color(0xFFD32F2F) : const Color(0xFF1565C0);
+    final platform = platformId != null ? platformById(platformId) : null;
+    final isSpecial = rule.isSpecial;
+    final accent =
+        isSpecial ? const Color(0xFFD32F2F) : const Color(0xFF1565C0);
     final bgColors = isSpecial
         ? [const Color(0xFFFFF5F5), const Color(0xFFFFEBEB)]
         : [const Color(0xFFF0F7FF), const Color(0xFFE3EEFF)];
@@ -675,9 +799,9 @@ class _HomeScreenState extends State<HomeScreen>
         ),
         child: Row(
           children: [
-            // 平台色塊
             Container(
-              width: 52, height: 52,
+              width: 52,
+              height: 52,
               decoration: BoxDecoration(
                   color: accent, borderRadius: BorderRadius.circular(10)),
               child: Center(
@@ -757,7 +881,8 @@ class _HomeScreenState extends State<HomeScreen>
       child: Row(
         children: [
           Container(
-            width: 52, height: 52,
+            width: 52,
+            height: 52,
             decoration: BoxDecoration(
                 color: store.primaryColor,
                 borderRadius: BorderRadius.circular(10)),
@@ -795,38 +920,36 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ════════════════════════════════════════════════════════════════════════
-  // 其他支付：橫向捲軸（比第 1 名低，最多 4 個）
+  // 其他支付：橫向捲軸
   // ════════════════════════════════════════════════════════════════════════
 
   Widget _buildOtherPayRow(List<DiscountRule> otherDiscounts) {
     return ValueListenableBuilder<List<String>>(
       valueListenable: payMethodsNotifier,
       builder: (_, enabledIds, __) {
-        final chips    = <_OtherChip>[];
+        final chips = <_OtherChip>[];
         final shownIds = <String>{};
 
-        // 排除已在第 1 名的平台
         final allDiscounts = _getBestDiscountsFor(_activeStoreId);
         if (allDiscounts.isNotEmpty) {
-          final topId = discountSoftwareToId(allDiscounts.first.paymentSoftware);
+          final topId =
+              discountSoftwareToId(allDiscounts.first.paymentSoftware);
           if (topId != null) shownIds.add(topId);
         }
 
-        // DB 次優折扣（最多 4）
         for (final rule in otherDiscounts) {
           if (chips.length >= 4) break;
-          final id       = discountSoftwareToId(rule.paymentSoftware);
+          final id = discountSoftwareToId(rule.paymentSoftware);
           final platform = id != null ? platformById(id) : null;
           if (platform == null || shownIds.contains(id)) continue;
           shownIds.add(id!);
           chips.add(_OtherChip(
-            platform:  platform,
-            badge:     '${(rule.equivalentRate * 100).toStringAsFixed(0)}%',
+            platform: platform,
+            badge: '${(rule.equivalentRate * 100).toStringAsFixed(0)}%',
             isSpecial: rule.isSpecial,
           ));
         }
 
-        // 使用者設定的（補足名額）
         for (final id in enabledIds) {
           if (chips.length >= 4) break;
           if (shownIds.contains(id)) continue;
@@ -836,20 +959,20 @@ class _HomeScreenState extends State<HomeScreen>
           chips.add(_OtherChip(platform: platform));
         }
 
-        // 全空時顯示引導
         if (chips.isEmpty) {
           return GestureDetector(
             onTap: widget.onGoToMember,
             child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 14, vertical: 12),
               decoration: BoxDecoration(
                 color: Colors.white,
                 border: Border.all(color: const Color(0xFFE0E0E0)),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: const Text('+ 前往「會員」設定行動支付',
-                  style: TextStyle(fontSize: 12, color: Color(0xFF1A73E8))),
+                  style:
+                      TextStyle(fontSize: 12, color: Color(0xFF1A73E8))),
             ),
           );
         }
@@ -878,7 +1001,8 @@ class _HomeScreenState extends State<HomeScreen>
     return GestureDetector(
       onTap: () => _launchPayApp(chip.platform),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
           color: Colors.white,
           border: Border.all(
@@ -896,7 +1020,8 @@ class _HomeScreenState extends State<HomeScreen>
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 32, height: 32,
+              width: 32,
+              height: 32,
               decoration: BoxDecoration(
                   color: chip.platform.color,
                   borderRadius: BorderRadius.circular(8)),
@@ -970,23 +1095,28 @@ class _HomeScreenState extends State<HomeScreen>
         return ValueListenableBuilder<Map<String, bool>>(
           valueListenable: memberSetupNotifier,
           builder: (_, memberMap, __) {
-            final isReady = carrierReady || memberMap.values.any((v) => v);
+            final isReady =
+                carrierReady || memberMap.values.any((v) => v);
             return GestureDetector(
               onTap: widget.onGoToMember,
               child: Container(
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(vertical: 16),
                 decoration: BoxDecoration(
-                  color: isReady ? const Color(0xFF4CAF50) : Colors.white,
+                  color: isReady
+                      ? const Color(0xFF4CAF50)
+                      : Colors.white,
                   borderRadius: BorderRadius.circular(50),
                   border: isReady
                       ? null
                       : Border.all(color: const Color(0xFFE0E0E0)),
                   boxShadow: isReady
-                      ? [const BoxShadow(
-                          color: Color(0x254CAF50),
-                          blurRadius: 12,
-                          offset: Offset(0, 4))]
+                      ? [
+                          const BoxShadow(
+                              color: Color(0x254CAF50),
+                              blurRadius: 12,
+                              offset: Offset(0, 4))
+                        ]
                       : null,
                 ),
                 child: Row(
@@ -996,7 +1126,9 @@ class _HomeScreenState extends State<HomeScreen>
                       isReady
                           ? Icons.check_circle
                           : Icons.radio_button_unchecked,
-                      color: isReady ? Colors.white : const Color(0xFFCCCCCC),
+                      color: isReady
+                          ? Colors.white
+                          : const Color(0xFFCCCCCC),
                       size: 20,
                     ),
                     const SizedBox(width: 10),
@@ -1034,8 +1166,8 @@ class _HomeScreenState extends State<HomeScreen>
           child: RotatedBox(
             quarterTurns: 2,
             child: SingleChildScrollView(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 24, vertical: 20),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -1075,8 +1207,250 @@ class _HomeScreenState extends State<HomeScreen>
                   const SizedBox(height: 20),
                   Text('將手機收回即可返回首頁',
                       style: TextStyle(
-                          fontSize: 11, color: Colors.grey.shade400)),
+                          fontSize: 11,
+                          color: Colors.grey.shade400)),
                 ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // 收回手機後的最佳支付提示 Overlay
+  // ════════════════════════════════════════════════════════════════════════
+
+  Widget _buildPayPromptOverlay() {
+    final storeId = _activeStoreId;
+    final store = kStores[storeId]!;
+    final discounts = _getBestDiscountsFor(storeId);
+    if (discounts.isEmpty) return const SizedBox.shrink();
+
+    final top = discounts.first;
+    final isSpecial = top.isSpecial;
+    final accent =
+        isSpecial ? const Color(0xFFD32F2F) : const Color(0xFF1565C0);
+    final bgColor =
+        isSpecial ? const Color(0xFFFFF5F5) : const Color(0xFFF0F7FF);
+
+    return Positioned.fill(
+      child: GestureDetector(
+        onTap: _cancelPayPrompt,
+        child: Container(
+          color: Colors.black.withOpacity(0.55),
+          child: Center(
+            child: GestureDetector(
+              onTap: () {}, // 阻止點擊穿透
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 28),
+                padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(24),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.18),
+                      blurRadius: 32,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // ── 標頭：店名 + 倒數圓圈 ──────────────────────────
+                    Row(
+                      children: [
+                        SizedBox(
+                            width: 36,
+                            height: 36,
+                            child: _buildStoreLogo(storeId)),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                store.name,
+                                style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF111111)),
+                              ),
+                              Text(
+                                '即將開啟付款',
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.grey.shade500),
+                              ),
+                            ],
+                          ),
+                        ),
+                        // 倒數計時圓圈
+                        SizedBox(
+                          width: 44,
+                          height: 44,
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              CircularProgressIndicator(
+                                value: _payPromptCountdown / 5,
+                                strokeWidth: 3.5,
+                                backgroundColor: Colors.grey.shade200,
+                                color: accent,
+                              ),
+                              Text(
+                                '$_payPromptCountdown',
+                                style: TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w800,
+                                    color: accent),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 8),
+                    Divider(color: Colors.grey.shade100, height: 16),
+                    const SizedBox(height: 4),
+
+                    // ── 小標題 ────────────────────────────────────────
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        '最佳支付方式',
+                        style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.grey.shade500),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+
+                    // ── 折扣大卡（點擊立即開啟）──────────────────────
+                    GestureDetector(
+                      onTap: () {
+                        _payPromptTimer?.cancel();
+                        setState(() => _showPayPrompt = false);
+                        _launchTopPay();
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: bgColor,
+                          border: Border.all(color: accent, width: 1.5),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Row(
+                          children: [
+                            // 平台色塊
+                            Container(
+                              width: 52,
+                              height: 52,
+                              decoration: BoxDecoration(
+                                  color: accent,
+                                  borderRadius: BorderRadius.circular(10)),
+                              child: Center(
+                                child: Text(
+                                  top.paymentSoftware.length <= 2
+                                      ? top.paymentSoftware
+                                      : top.paymentSoftware.substring(0, 2),
+                                  style: const TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w900,
+                                      color: Colors.white),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(children: [
+                                    Text(
+                                      top.paymentSoftware,
+                                      style: TextStyle(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w700,
+                                          color: accent),
+                                    ),
+                                    if (isSpecial) ...[
+                                      const SizedBox(width: 6),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 5, vertical: 1),
+                                        decoration: BoxDecoration(
+                                            color: accent,
+                                            borderRadius:
+                                                BorderRadius.circular(4)),
+                                        child: const Text('限時特惠',
+                                            style: TextStyle(
+                                                fontSize: 9,
+                                                fontWeight: FontWeight.w700,
+                                                color: Colors.white)),
+                                      ),
+                                    ],
+                                  ]),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '回饋 ${(top.equivalentRate * 100).toStringAsFixed(0)} %',
+                                    style: TextStyle(
+                                        fontSize: 22,
+                                        fontWeight: FontWeight.w900,
+                                        color: accent,
+                                        height: 1.2),
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    top.ruleDesc,
+                                    style: const TextStyle(
+                                        fontSize: 10,
+                                        color: Color(0xFF888888)),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Icon(Icons.arrow_forward_ios_rounded,
+                                size: 14, color: accent),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 14),
+
+                    // ── 取消按鈕 ─────────────────────────────────────
+                    SizedBox(
+                      width: double.infinity,
+                      child: TextButton(
+                        onPressed: _cancelPayPrompt,
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            side: BorderSide(color: Colors.grey.shade200),
+                          ),
+                        ),
+                        child: const Text(
+                          '取消',
+                          style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF888888)),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -1124,10 +1498,13 @@ class _TiltBarcodeSection extends StatefulWidget {
 
 class _TiltBarcodeSectionState extends State<_TiltBarcodeSection> {
   String? _code;
-  String  _type = 'code128';
+  String _type = 'code128';
 
   @override
-  void initState() { super.initState(); _load(); }
+  void initState() {
+    super.initState();
+    _load();
+  }
 
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -1135,7 +1512,11 @@ class _TiltBarcodeSectionState extends State<_TiltBarcodeSection> {
     String? type = prefs.getString(widget.prefKeyType);
     if (code == null) {
       for (final brand in [
-        '全家便利商店', '7-ELEVEN', '萊爾富', 'OK便利商店', '_generic'
+        '全家便利商店',
+        '7-ELEVEN',
+        '萊爾富',
+        'OK便利商店',
+        '_generic'
       ]) {
         code = prefs.getString('member_barcode_$brand');
         type = prefs.getString('member_type_$brand');
@@ -1143,38 +1524,62 @@ class _TiltBarcodeSectionState extends State<_TiltBarcodeSection> {
       }
     }
     if (!mounted) return;
-    setState(() { _code = code; _type = type ?? 'code128'; });
+    setState(() {
+      _code = code;
+      _type = type ?? 'code128';
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     if (_code == null) {
-      return _emptyBox(context, Icons.person_outline, '未設定${widget.title}');
+      return _emptyBox(
+          context, Icons.person_outline, '未設定${widget.title}');
     }
     Barcode barcode;
     switch (_type) {
-      case 'ean13':  barcode = Barcode.ean13(); break;
-      case 'qrCode': barcode = Barcode.qrCode(); break;
-      default:       barcode = Barcode.code128();
+      case 'ean13':
+        barcode = Barcode.ean13();
+        break;
+      case 'qrCode':
+        barcode = Barcode.qrCode();
+        break;
+      default:
+        barcode = Barcode.code128();
     }
     final isQR = _type == 'qrCode';
     return _barcodeBox(
-      label: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Icon(widget.icon, size: 14, color: Colors.grey.shade600),
-        const SizedBox(width: 4),
-        Text(widget.title,
-            style: TextStyle(fontSize: 12,
-                fontWeight: FontWeight.w600, color: Colors.grey.shade700)),
-      ]),
+      label: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(widget.icon, size: 14, color: Colors.grey.shade600),
+            const SizedBox(width: 4),
+            Text(widget.title,
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade700)),
+          ]),
       barcode: isQR
-          ? Center(child: BarcodeWidget(
-              barcode: barcode, data: _code!,
-              width: 150, height: 150, drawText: false))
-          : LayoutBuilder(builder: (ctx, c) => BarcodeWidget(
-              barcode: barcode,
-              data: _code!.trim().toUpperCase().replaceAll(RegExp(r'\s'), ''),
-              width: c.maxWidth, height: 100, drawText: false,
-              padding: const EdgeInsets.symmetric(horizontal: 24))),
+          ? Center(
+              child: BarcodeWidget(
+                  barcode: barcode,
+                  data: _code!,
+                  width: 150,
+                  height: 150,
+                  drawText: false))
+          : LayoutBuilder(
+              builder: (ctx, c) => BarcodeWidget(
+                  barcode: barcode,
+                  data: _code!
+                      .trim()
+                      .toUpperCase()
+                      .replaceAll(RegExp(r'\s'), ''),
+                  width: c.maxWidth,
+                  height: 100,
+                  drawText: false,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 24))),
       code: _code!,
     );
   }
@@ -1186,6 +1591,7 @@ class _TiltBarcodeSectionState extends State<_TiltBarcodeSection> {
 
 class _TiltCarrierSection extends StatefulWidget {
   const _TiltCarrierSection();
+
   @override
   State<_TiltCarrierSection> createState() => _TiltCarrierSectionState();
 }
@@ -1194,13 +1600,18 @@ class _TiltCarrierSectionState extends State<_TiltCarrierSection> {
   String? _code;
 
   @override
-  void initState() { super.initState(); _load(); }
+  void initState() {
+    super.initState();
+    _load();
+  }
 
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString('carrier_code');
     if (!mounted) return;
-    setState(() { _code = raw?.trim().toUpperCase(); });
+    setState(() {
+      _code = raw?.trim().toUpperCase();
+    });
   }
 
   @override
@@ -1209,16 +1620,27 @@ class _TiltCarrierSectionState extends State<_TiltCarrierSection> {
       return _emptyBox(context, Icons.receipt_long, '未設定電子載具');
     }
     return _barcodeBox(
-      label: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Icon(Icons.receipt_long, size: 14, color: Colors.grey.shade600),
-        const SizedBox(width: 4),
-        Text('電子載具', style: TextStyle(fontSize: 12,
-            fontWeight: FontWeight.w600, color: Colors.grey.shade700)),
-      ]),
-      barcode: LayoutBuilder(builder: (ctx, c) => BarcodeWidget(
-        barcode: Barcode.code128(), data: _code!,
-        width: c.maxWidth, height: 100, drawText: false,
-        padding: const EdgeInsets.symmetric(horizontal: 24))),
+      label: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.receipt_long,
+                size: 14, color: Colors.grey.shade600),
+            const SizedBox(width: 4),
+            Text('電子載具',
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade700)),
+          ]),
+      barcode: LayoutBuilder(
+          builder: (ctx, c) => BarcodeWidget(
+              barcode: Barcode.code128(),
+              data: _code!,
+              width: c.maxWidth,
+              height: 100,
+              drawText: false,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 24))),
       code: _code!,
     );
   }
@@ -1237,7 +1659,8 @@ Widget _emptyBox(BuildContext context, IconData icon, String text) {
     child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
       Icon(icon, color: Colors.grey.shade400, size: 16),
       const SizedBox(width: 8),
-      Text(text, style: TextStyle(fontSize: 13, color: Colors.grey.shade400)),
+      Text(text,
+          style: TextStyle(fontSize: 13, color: Colors.grey.shade400)),
     ]),
   );
 }
@@ -1248,14 +1671,17 @@ Widget _barcodeBox({
   required String code,
 }) {
   return Container(
-    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    padding:
+        const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
     decoration: BoxDecoration(
       color: Colors.white,
       borderRadius: BorderRadius.circular(16),
       border: Border.all(color: Colors.grey.shade200),
       boxShadow: [
-        BoxShadow(color: Colors.black.withOpacity(0.04),
-            blurRadius: 8, offset: const Offset(0, 2))
+        BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2))
       ],
     ),
     child: Column(children: [
@@ -1265,7 +1691,9 @@ Widget _barcodeBox({
       const SizedBox(height: 8),
       Text(code,
           style: const TextStyle(
-              fontFamily: 'monospace', fontSize: 13, letterSpacing: 1.5)),
+              fontFamily: 'monospace',
+              fontSize: 13,
+              letterSpacing: 1.5)),
     ]),
   );
 }
