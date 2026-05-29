@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../notifiers.dart';
+import '../models/store_info.dart';
 import '../models/pay_platform.dart';
 import '../features/invoice/presentation/screens/carrier_input_screen.dart';
 import '../features/invoice/presentation/screens/member_barcode_screen.dart';
@@ -71,11 +72,19 @@ class _MemberScreenState extends State<MemberScreen> {
       }
     }
 
-    // 2. 超商會員設定
+    // 2. 超商會員設定（使用與 Home 一致的品牌顯示名稱作為 key）
+    // 對應到 kStores 的 name 屬性
+    final brandMap = {
+      '7-ELEVEN': kStores['seven']!.name,
+      '全家': kStores['fm']!.name,
+      '萊爾富': kStores['hilife']!.name,
+      'OK': kStores['ok']!.name,
+    };
     Map<String, String> tempMem = {};
-    for (var brand in ['7-ELEVEN', '全家', '萊爾富', 'OK']) {
-      final code = prefs.getString('member_barcode_$brand');
-      if (code != null) tempMem[brand] = code;
+    for (var display in brandMap.keys) {
+      final prefBrand = brandMap[display]!;
+      final code = prefs.getString('member_barcode_$prefBrand');
+      if (code != null) tempMem[display] = code;
     }
 
     // 3. 載具設定
@@ -87,7 +96,33 @@ class _MemberScreenState extends State<MemberScreen> {
         _savedMembers = tempMem;
         _savedCarrier = carrier;
       });
+
+      // 同步更新全局 notifiers
+      memberSetupNotifier.value = {
+        'fm': prefs.getString('member_barcode_${kStores['fm']!.name}') != null,
+        'seven': prefs.getString('member_barcode_${kStores['seven']!.name}') != null,
+        'hilife': prefs.getString('member_barcode_${kStores['hilife']!.name}') != null,
+        'ok': prefs.getString('member_barcode_${kStores['ok']!.name}') != null,
+      };
+      carrierSetupNotifier.value = (carrier != null && carrier.isNotEmpty);
     }
+  }
+
+  Future<void> _syncPayMethodsFromPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final payKeys = prefs.getKeys().where((k) => k.startsWith('pay_v3_'));
+    final ids = <String>{};
+    for (var k in payKeys) {
+      final data = prefs.getStringList(k);
+      if (data != null && data.isNotEmpty) {
+        final platformName = data[0];
+        final id = discountSoftwareToId(platformName);
+        if (id != null) ids.add(id);
+      }
+    }
+    final list = ids.toList();
+    payMethodsNotifier.value = list;
+    await savePayMethods(list);
   }
 
   // ── UI 佈局 ──────────────────────────────────────────────────────────────
@@ -192,27 +227,36 @@ class _MemberScreenState extends State<MemberScreen> {
   // ── 2. 會員區塊內容 ──────────────────────────────────────────────────────────
 
   Widget _buildMemberContent() {
-    final stores = ['7-ELEVEN', '全家', '萊爾富', 'OK'];
+    final brandMap = {
+      '7-ELEVEN': kStores['seven']!.name,
+      '全家': kStores['fm']!.name,
+      '萊爾富': kStores['hilife']!.name,
+      'OK': kStores['ok']!.name,
+    };
     return Column(
-      children: stores.map((s) => Container(
-        margin: const EdgeInsets.only(top: 8),
-        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
-        child: ListTile(
-          title: Text(s, style: const TextStyle(fontWeight: FontWeight.w600)),
-          subtitle: Text(_savedMembers[s] ?? '尚未設定'),
-          trailing: _buildModifyBox(
-            onEdit: () async {
-              await Navigator.push(context, MaterialPageRoute(builder: (_) => MemberBarcodeScreen(brandName: s)));
-              _loadAllData();
-            },
-            onDelete: () async {
-              final prefs = await SharedPreferences.getInstance();
-              await prefs.remove('member_barcode_$s');
-              _loadAllData();
-            }
+      children: brandMap.keys.map((s) {
+        final prefBrand = brandMap[s]!;
+        return Container(
+          margin: const EdgeInsets.only(top: 8),
+          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+          child: ListTile(
+            title: Text(s, style: const TextStyle(fontWeight: FontWeight.w600)),
+            subtitle: Text(_savedMembers[s] ?? '尚未設定'),
+            trailing: _buildModifyBox(
+              onEdit: () async {
+                await Navigator.push(context, MaterialPageRoute(builder: (_) => MemberBarcodeScreen(brandName: prefBrand)));
+                _loadAllData();
+              },
+              onDelete: () async {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.remove('member_barcode_$prefBrand');
+                await prefs.remove('member_type_$prefBrand');
+                _loadAllData();
+              }
+            ),
           ),
-        ),
-      )).toList(),
+        );
+      }).toList(),
     );
   }
 
@@ -339,6 +383,8 @@ class _MemberScreenState extends State<MemberScreen> {
               final prefs = await SharedPreferences.getInstance();
               final id = existing?.id ?? 'pay_v3_${DateTime.now().millisecondsSinceEpoch}';
               await prefs.setStringList(id, [platform, selectedLevel, ...selectedMethods]);
+              // 同步 payMethods 到 notifiers（供 Home 顯示 chips）
+              await _syncPayMethodsFromPrefs();
               Navigator.pop(ctx);
               _loadAllData();
             }, child: const Text('儲存')),
@@ -354,6 +400,7 @@ class _MemberScreenState extends State<MemberScreen> {
   Future<void> _deleteSetting(String id) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(id);
+    await _syncPayMethodsFromPrefs();
     _loadAllData();
   }
 }
