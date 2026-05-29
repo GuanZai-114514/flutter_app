@@ -83,21 +83,22 @@ class _RootScreenState extends State<RootScreen> {
       final path = p.join(await getDatabasesPath(), 'pay_helper.db');
       Database? db;
 
-      // 如果需要強制重置資料庫，請取消註解下一行
+      // 如果需要強制重置資料庫進行測試，請取消註解下一行
       // await deleteDatabase(path);
 
       if (!await databaseExists(path)) {
-        final copied = await _copyPrebuiltDatabase(path, 'assets/brand_name.db');
+        // 修正預建 DB 路徑為 lib/assets/...
+        final copied = await _copyPrebuiltDatabase(path, 'lib/assets/brand_name.db');
         if (!copied) {
           db = await openDatabase(path, version: 1, onCreate: (db, ver) async {
-            // 執行原始資料
-            await _loadAndExecuteSql(db, 'lib/brand_name.sql');
-            await _loadAndExecuteSql(db, 'lib/Payment/reward_rules.sql');
-            await _loadAndExecuteSql(db, 'lib/Payment/discount_rules.sql');
-            await _loadAndExecuteSql(db, 'lib/Payment/rule_store_map.sql');
-            await _loadAndExecuteSql(db, 'lib/Payment/payment_options.sql');
+            // 執行資料庫指令，路徑均修正為 lib/assets/...
+            await _loadAndExecuteSql(db, 'lib/assets/brand_name.sql');
+            await _loadAndExecuteSql(db, 'lib/assets/Payment/reward_rules.sql');
+            await _loadAndExecuteSql(db, 'lib/assets/Payment/discount_rules.sql');
+            await _loadAndExecuteSql(db, 'lib/assets/Payment/rule_store_map.sql');
+            await _loadAndExecuteSql(db, 'lib/assets/Payment/payment_options.sql');
             
-            // 執行新資料
+            // 執行新資料，路徑修正為 lib/assets/...
             await _loadAndExecuteSql(db, 'lib/assets/payment/等級.sql');
             await _loadAndExecuteSql(db, 'lib/assets/payment/支付方式.sql');
             await _loadAndExecuteSql(db, 'lib/assets/members/會員.sql');
@@ -107,8 +108,11 @@ class _RootScreenState extends State<RootScreen> {
       
       db ??= await openDatabase(path, version: 1);
       
-      // 重要：確保所有表都有正確的欄位（解決 SQL 分開建立導致的欄位缺失）
+      // 確保欄位完整
       await _fixTableSchemas(db);
+      
+      // 確保必要資料表存在
+      await _ensureTables(db);
       
       final rows = await db.query('brand_name');
 
@@ -120,6 +124,7 @@ class _RootScreenState extends State<RootScreen> {
       }
     } catch (e) {
       debugPrint('❌ DB 初始化失敗: $e');
+      // 即便失敗也嘗試開啟，避免無限轉圈，或者在此處理錯誤 UI
     }
   }
 
@@ -127,15 +132,12 @@ class _RootScreenState extends State<RootScreen> {
   Future<void> _fixTableSchemas(Database db) async {
     final tables = ['Easy_wallet', 'JKOPay', 'Line_Pay', 'PXPay_Plus', 'Taiwan_Pay'];
     for (var table in tables) {
-      // 檢查是否存在，不存在則建立完整表
       await db.execute('CREATE TABLE IF NOT EXISTS "$table" (id INTEGER PRIMARY KEY, user_level TEXT, payment_method TEXT)');
       
-      // 檢查 user_level 欄位
       var columns = await db.rawQuery('PRAGMA table_info("$table")');
       if (!columns.any((c) => c['name'] == 'user_level')) {
         await db.execute('ALTER TABLE "$table" ADD COLUMN user_level TEXT');
       }
-      // 檢查 payment_method 欄位
       if (!columns.any((c) => c['name'] == 'payment_method')) {
         await db.execute('ALTER TABLE "$table" ADD COLUMN payment_method TEXT');
       }
@@ -162,6 +164,15 @@ class _RootScreenState extends State<RootScreen> {
     } catch (e) {
       debugPrint('⚠️ 無法複製預建 DB ($asset): $e');
       return false;
+    }
+  }
+
+  Future<void> _ensureTables(Database db) async {
+    final brandTable = await db.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='brand_name'",
+    );
+    if (brandTable.isEmpty) {
+      await _loadAndExecuteSql(db, 'lib/assets/brand_name.sql');
     }
   }
 
