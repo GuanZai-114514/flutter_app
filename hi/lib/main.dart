@@ -103,7 +103,10 @@ class _RootScreenState extends State<RootScreen> {
       }
       
       db ??= await openDatabase(path, version: 1);
-      
+
+      // 若剛複製預建 DB，或預建 DB 只包含部分表，確保其他 SQL 資料表也被載入
+      await _ensureSqlAssets(db);
+
       // 確保欄位完整
       await _fixTableSchemas(db);
       
@@ -137,6 +140,38 @@ class _RootScreenState extends State<RootScreen> {
       if (!columns.any((c) => c['name'] == 'payment_method')) {
         await db.execute('ALTER TABLE "$table" ADD COLUMN payment_method TEXT');
       }
+    }
+  }
+
+  // 確保必要的 SQL 資料表（若複製了預建 DB 但缺少其他表）
+  Future<void> _ensureSqlAssets(Database db) async {
+    try {
+      final checks = {
+        'brand_name': 'lib/brand_name.sql',
+        'payment_options': 'lib/Payment/payment_options.sql',
+        'discount_rules': 'lib/Payment/discount_rules.sql',
+        'rule_store_map': 'lib/Payment/rule_store_map.sql',
+        'reward_rules': 'lib/Payment/reward_rules.sql',
+      };
+      for (final e in checks.entries) {
+        final rows = await db.rawQuery("SELECT name FROM sqlite_master WHERE type='table' AND name='${e.key}'");
+        if (rows.isEmpty) await _loadAndExecuteSql(db, e.value);
+      }
+
+      // 若平台等級 / 支付方式表尚未建立，載入兩個 SQL
+      final plat = await db.rawQuery("SELECT name FROM sqlite_master WHERE type='table' AND name='Easy_wallet'");
+      if (plat.isEmpty) {
+        await _loadAndExecuteSql(db, 'lib/assets/payment/等級.sql');
+        await _loadAndExecuteSql(db, 'lib/assets/payment/支付方式.sql');
+      }
+
+      // 若會員相關表尚未建立，載入會員 SQL
+      final mem = await db.rawQuery("SELECT name FROM sqlite_master WHERE type='table' AND name='payment_software'");
+      if (mem.isEmpty) {
+        await _loadAndExecuteSql(db, 'lib/assets/members/會員.sql');
+      }
+    } catch (e) {
+      debugPrint('⚠️ 確保 SQL 資產時發生錯誤: $e');
     }
   }
 
