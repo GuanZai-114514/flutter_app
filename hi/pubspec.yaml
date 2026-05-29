@@ -62,3 +62,6 @@ flutter:
     - lib/assets/images/fm.png
     - lib/assets/images/hl.png
     - lib/assets/images/ok.png
+    - lib/assets/members/會員.sql
+    - lib/assets/payment/支付方式.sql
+    - lib/assets/payment/等級.sql
