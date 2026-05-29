@@ -83,24 +83,32 @@ class _RootScreenState extends State<RootScreen> {
       final path = p.join(await getDatabasesPath(), 'pay_helper.db');
       Database? db;
 
+      // 如果需要強制重置資料庫，請取消註解下一行
+      // await deleteDatabase(path);
+
       if (!await databaseExists(path)) {
         final copied = await _copyPrebuiltDatabase(path, 'lib/assets/brand_name.db');
         if (!copied) {
           db = await openDatabase(path, version: 1, onCreate: (db, ver) async {
+            // 執行原始資料
             await _loadAndExecuteSql(db, 'lib/assets/brand_name.sql');
             await _loadAndExecuteSql(db, 'lib/assets/Payment/reward_rules.sql');
             await _loadAndExecuteSql(db, 'lib/assets/Payment/discount_rules.sql');
             await _loadAndExecuteSql(db, 'lib/assets/Payment/rule_store_map.sql');
             await _loadAndExecuteSql(db, 'lib/assets/Payment/payment_options.sql');
-            await _loadAndExecuteSql(db, 'lib/assets/Payment/等級.sql');
-            await _loadAndExecuteSql(db, 'lib/assets/Payment/支付方式.sql');
-            await _loadAndExecuteSql(db, 'lib/assets/Payment/會員.sql');
+            
+            // 執行新資料
+            await _loadAndExecuteSql(db, 'lib/assets/payment/等級.sql');
+            await _loadAndExecuteSql(db, 'lib/assets/payment/支付方式.sql');
+            await _loadAndExecuteSql(db, 'lib/assets/members/會員.sql');
           });
         }
       }
       
       db ??= await openDatabase(path, version: 1);
-      await _ensureTables(db);
+      
+      // 重要：確保所有表都有正確的欄位（解決 SQL 分開建立導致的欄位缺失）
+      await _fixTableSchemas(db);
       
       final rows = await db.query('brand_name');
 
@@ -112,6 +120,25 @@ class _RootScreenState extends State<RootScreen> {
       }
     } catch (e) {
       debugPrint('❌ DB 初始化失敗: $e');
+    }
+  }
+
+  // 修正資料表欄位，確保同時具備 user_level 與 payment_method
+  Future<void> _fixTableSchemas(Database db) async {
+    final tables = ['Easy_wallet', 'JKOPay', 'Line_Pay', 'PXPay_Plus', 'Taiwan_Pay'];
+    for (var table in tables) {
+      // 檢查是否存在，不存在則建立完整表
+      await db.execute('CREATE TABLE IF NOT EXISTS "$table" (id INTEGER PRIMARY KEY, user_level TEXT, payment_method TEXT)');
+      
+      // 檢查 user_level 欄位
+      var columns = await db.rawQuery('PRAGMA table_info("$table")');
+      if (!columns.any((c) => c['name'] == 'user_level')) {
+        await db.execute('ALTER TABLE "$table" ADD COLUMN user_level TEXT');
+      }
+      // 檢查 payment_method 欄位
+      if (!columns.any((c) => c['name'] == 'payment_method')) {
+        await db.execute('ALTER TABLE "$table" ADD COLUMN payment_method TEXT');
+      }
     }
   }
 
@@ -135,17 +162,6 @@ class _RootScreenState extends State<RootScreen> {
     } catch (e) {
       debugPrint('⚠️ 無法複製預建 DB ($asset): $e');
       return false;
-    }
-  }
-
-  Future<void> _ensureTables(Database db) async {
-    final checkTable = await db.rawQuery(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='payment_software'",
-    );
-    if (checkTable.isEmpty) {
-      await _loadAndExecuteSql(db, 'lib/assets/Payment/等級.sql');
-      await _loadAndExecuteSql(db, 'lib/assets/Payment/支付方式.sql');
-      await _loadAndExecuteSql(db, 'lib/assets/Payment/會員.sql');
     }
   }
 
