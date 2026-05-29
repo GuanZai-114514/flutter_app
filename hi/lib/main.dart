@@ -24,12 +24,15 @@ void main() async {
     return true;
   };
 
+  // 初始化全局狀態
+  await initializeAllNotifiers();
+
   runApp(const MyApp());
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
 // MyApp
-// ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -55,9 +58,9 @@ class MyApp extends StatelessWidget {
   }
 }
 
-// ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
 // RootScreen — 底部導覽 3 Tab
-// ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
 
 class RootScreen extends StatefulWidget {
   const RootScreen({super.key});
@@ -74,7 +77,6 @@ class _RootScreenState extends State<RootScreen> {
   @override
   void initState() {
     super.initState();
-    loadPayMethods();
     WidgetsBinding.instance.addPostFrameCallback((_) => _initDatabase());
   }
 
