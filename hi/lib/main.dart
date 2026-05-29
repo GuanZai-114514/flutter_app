@@ -87,18 +87,14 @@ class _RootScreenState extends State<RootScreen> {
       // await deleteDatabase(path);
 
       if (!await databaseExists(path)) {
-        // 修正預建 DB 路徑為 lib/assets/...
-        final copied = await _copyPrebuiltDatabase(path, 'lib/assets/brand_name.db');
+        final copied = await _copyPrebuiltDatabase(path, 'assets/brand_name.db');
         if (!copied) {
           db = await openDatabase(path, version: 1, onCreate: (db, ver) async {
-            // 執行資料庫指令，路徑均修正為 lib/assets/...
-            await _loadAndExecuteSql(db, 'lib/assets/brand_name.sql');
-            await _loadAndExecuteSql(db, 'lib/assets/Payment/reward_rules.sql');
-            await _loadAndExecuteSql(db, 'lib/assets/Payment/discount_rules.sql');
-            await _loadAndExecuteSql(db, 'lib/assets/Payment/rule_store_map.sql');
-            await _loadAndExecuteSql(db, 'lib/assets/Payment/payment_options.sql');
-            
-            // 執行新資料，路徑修正為 lib/assets/...
+            await _loadAndExecuteSql(db, 'lib/brand_name.sql');
+            await _loadAndExecuteSql(db, 'lib/Payment/reward_rules.sql');
+            await _loadAndExecuteSql(db, 'lib/Payment/discount_rules.sql');
+            await _loadAndExecuteSql(db, 'lib/Payment/rule_store_map.sql');
+            await _loadAndExecuteSql(db, 'lib/Payment/payment_options.sql');
             await _loadAndExecuteSql(db, 'lib/assets/payment/等級.sql');
             await _loadAndExecuteSql(db, 'lib/assets/payment/支付方式.sql');
             await _loadAndExecuteSql(db, 'lib/assets/members/會員.sql');
@@ -172,7 +168,7 @@ class _RootScreenState extends State<RootScreen> {
       "SELECT name FROM sqlite_master WHERE type='table' AND name='brand_name'",
     );
     if (brandTable.isEmpty) {
-      await _loadAndExecuteSql(db, 'lib/assets/brand_name.sql');
+      await _loadAndExecuteSql(db, 'lib/brand_name.sql');
     }
   }
 
