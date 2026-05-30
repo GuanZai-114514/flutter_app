@@ -698,22 +698,11 @@ class _HomeScreenState extends State<HomeScreen>
         child: Row(
           children: [
             // 平台色塊
-            Container(
-              width: 52, height: 52,
-              decoration: BoxDecoration(
-                  color: accent, borderRadius: BorderRadius.circular(10)),
-              child: Center(
-                child: Text(
-                  rule.paymentSoftware.length <= 2
-                      ? rule.paymentSoftware
-                      : rule.paymentSoftware.substring(0, 2),
-                  style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w900,
-                      color: Colors.white),
-                  textAlign: TextAlign.center,
-                ),
-              ),
+            buildPayPlatformIcon(
+              softwareName: rule.paymentSoftware,
+              size: 52,
+              fallbackColor: accent,
+              borderRadius: 10,
             ),
             const SizedBox(width: 14),
             Expanded(
@@ -908,6 +897,31 @@ class _HomeScreenState extends State<HomeScreen>
   // ════════════════════════════════════════════════════════════════════════
 
   Widget _buildStoreLogo(String id) {
+    // 圖片路徑對應表
+    const storeImages = <String, String>{
+      'fm':     'assets/images/fm.png',
+      'seven':  'assets/images/7-11.png',
+      'hilife': 'assets/images/hl.png',
+      'ok':     'assets/images/ok.png',
+    };
+
+    final imagePath = storeImages[id];
+    if (imagePath != null) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Image.asset(
+          imagePath,
+          width: 46,
+          height: 46,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _buildStoreLogoFallback(id),
+        ),
+      );
+    }
+    return _buildStoreLogoFallback(id);
+  }
+
+  Widget _buildStoreLogoFallback(String id) {
     switch (id) {
       case 'fm':
         return Column(children: [
@@ -1110,6 +1124,7 @@ class _HomeScreenState extends State<HomeScreen>
       ),
     );
   }
+
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1252,6 +1267,59 @@ class _TiltCarrierSectionState extends State<_TiltCarrierSection> {
 
 // ── 共用工具 ──────────────────────────────────────────────────────────────────
 
+// 行動支付平台圖示（top-level，_HomeScreenState 與 _PaymentSheetState 共用）
+Widget buildPayPlatformIcon({
+  required String softwareName,
+  required double size,
+  required Color fallbackColor,
+  double borderRadius = 10,
+}) {
+  const labelToId = <String, String>{
+    '悠遊付':    'easycard',
+    '街口支付':  'jkopay',
+    '全支付':    'allpay',
+    '台灣Pay':   'taiwanpay',
+    'Line Pay':  'linepay',
+    'LINE Pay':  'linepay',
+    'icash Pay': 'icashpay',
+  };
+  final id = discountSoftwareToId(softwareName) ?? labelToId[softwareName];
+  final platform = id != null ? platformById(id) : null;
+  final imagePath = platform?.imagePath;
+
+  return ClipRRect(
+    borderRadius: BorderRadius.circular(borderRadius),
+    child: imagePath != null
+        ? Image.asset(
+            imagePath,
+            width: size,
+            height: size,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) =>
+                _payPlatformTextBlock(softwareName, size, fallbackColor, borderRadius),
+          )
+        : _payPlatformTextBlock(softwareName, size, fallbackColor, borderRadius),
+  );
+}
+
+Widget _payPlatformTextBlock(
+    String name, double size, Color color, double borderRadius) {
+  return Container(
+    width: size,
+    height: size,
+    decoration: BoxDecoration(
+        color: color, borderRadius: BorderRadius.circular(borderRadius)),
+    child: Center(
+      child: Text(
+        name.length <= 2 ? name : name.substring(0, 2),
+        style: const TextStyle(
+            fontSize: 13, fontWeight: FontWeight.w900, color: Colors.white),
+        textAlign: TextAlign.center,
+      ),
+    ),
+  );
+}
+
 Widget _emptyBox(BuildContext context, IconData icon, String text) {
   return Container(
     padding: const EdgeInsets.all(16),
@@ -1375,23 +1443,46 @@ class _PaymentSheetState extends State<_PaymentSheet> {
   }
 
   Future<void> _launch(String platform) async {
-    final id = discountSoftwareToId(platform) ??
-        _platformLabelToId(platform);
-    if (id == null) return;
+    final id = discountSoftwareToId(platform) ?? _platformLabelToId(platform);
+    if (id == null) {
+      debugPrint('⚠️ 找不到平台 id：$platform');
+      return;
+    }
     final p = platformById(id);
-    if (p == null) return;
+    if (p == null) {
+      debugPrint('⚠️ 找不到 PayPlatform：$id');
+      return;
+    }
 
     final scheme = Platform.isIOS ? p.iosScheme : p.androidScheme;
+
+    // 優先嘗試 custom scheme 直接開啟 App
     if (scheme != null) {
       final uri = Uri.parse(scheme);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-        return;
+      try {
+        // 不用 canLaunchUrl 判斷（iOS 需要 Info.plist LSApplicationQueriesSchemes
+        // Android 需要 <queries>，漏設時 canLaunchUrl 永遠 false）
+        // 直接 launchUrl，若 App 未安裝會自動 fallback 或丟例外
+        final launched = await launchUrl(
+          uri,
+          mode: LaunchMode.externalApplication,
+        );
+        if (launched) return;
+      } catch (e) {
+        debugPrint('⚠️ scheme 啟動失敗 ($scheme): $e');
       }
     }
+
+    // Fallback：開網頁
     if (p.universalUrl != null) {
-      await launchUrl(Uri.parse(p.universalUrl!),
-          mode: LaunchMode.externalApplication);
+      try {
+        await launchUrl(
+          Uri.parse(p.universalUrl!),
+          mode: LaunchMode.externalApplication,
+        );
+      } catch (e) {
+        debugPrint('⚠️ universalUrl 啟動失敗: $e');
+      }
     }
   }
 
@@ -1500,23 +1591,11 @@ class _PaymentSheetState extends State<_PaymentSheet> {
             child: Row(
               children: [
                 // 平台色塊
-                Container(
-                  width: 46, height: 46,
-                  decoration: BoxDecoration(
-                      color: color,
-                      borderRadius: BorderRadius.circular(10)),
-                  child: Center(
-                    child: Text(
-                      entry.platform.length <= 2
-                          ? entry.platform
-                          : entry.platform.substring(0, 2),
-                      style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w900,
-                          color: Colors.white),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
+                buildPayPlatformIcon(
+                  softwareName: entry.platform,
+                  size: 46,
+                  fallbackColor: color,
+                  borderRadius: 10,
                 ),
                 const SizedBox(width: 12),
                 Expanded(
