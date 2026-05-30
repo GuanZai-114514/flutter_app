@@ -123,7 +123,11 @@ class _RootScreenState extends State<RootScreen> {
       }
     } catch (e) {
       debugPrint('❌ DB 初始化失敗: $e');
-      // 即便失敗也嘗試開啟，避免無限轉圈，或者在此處理錯誤 UI
+      if (mounted) {
+        setState(() {
+          _dbReady = true;
+        });
+      }
     }
   }
 
