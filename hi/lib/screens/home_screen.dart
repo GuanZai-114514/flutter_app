@@ -79,6 +79,14 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   @override
+  void didUpdateWidget(HomeScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!oldWidget.dbReady && widget.dbReady) {
+      _loadDiscountRules();
+    }
+  }
+
+  @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _accelSub?.cancel();
@@ -387,9 +395,39 @@ class _HomeScreenState extends State<HomeScreen>
               ),
             ),
 
-          !widget.dbReady
-              ? const Center(child: CircularProgressIndicator.adaptive())
-              : _buildBody(),
+          _buildBody(),
+
+          if (!widget.dbReady)
+            Positioned(
+              top: 96,
+              left: 16,
+              right: 16,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.95),
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x11000000),
+                      blurRadius: 12,
+                      offset: Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: const [
+                    SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    SizedBox(width: 12),
+                    Expanded(child: Text('資料庫初始化中，稍後自動顯示推薦內容。')),
+                  ],
+                ),
+              ),
+            ),
 
           // 傾斜 Overlay
           if (_isTilted) _buildTiltOverlay(),
