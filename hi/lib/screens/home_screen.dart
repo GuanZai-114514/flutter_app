@@ -16,6 +16,7 @@ import '../notifiers.dart';
 import '../models/discount_rule.dart';
 import '../models/pay_platform.dart';
 import '../models/store_info.dart';
+import '../widgets/pay_method_chip.dart';
 
 // ════════════════════════════════════════════════════════════════════════════
 // HomeScreen
@@ -671,9 +672,7 @@ class _HomeScreenState extends State<HomeScreen>
   // ── 最佳折扣大卡 ──────────────────────────────────────────────────────────
 
   Widget _buildTopDiscountCard(DiscountRule rule) {
-    final platformId = discountSoftwareToId(rule.paymentSoftware);
-    final platform   = platformId != null ? platformById(platformId) : null;
-    final isSpecial  = rule.isSpecial;
+    final isSpecial = rule.isSpecial;
     final accent = isSpecial ? const Color(0xFFD32F2F) : const Color(0xFF1565C0);
     final bgColors = isSpecial
         ? [const Color(0xFFFFF5F5), const Color(0xFFFFEBEB)]
@@ -883,82 +882,24 @@ class _HomeScreenState extends State<HomeScreen>
             children: chips
                 .map((chip) => Padding(
                       padding: const EdgeInsets.only(right: 10),
-                      child: _buildOtherChipWidget(chip),
+                      child: PayMethodChip(
+                        platform: chip.platform,
+                        badge: chip.badge,
+                        showLabel: false,
+                        onTap: () => showModalBottomSheet(
+                          context: context,
+                          isScrollControlled: true,
+                          backgroundColor: Colors.transparent,
+                          builder: (_) => _PaymentSheet(
+                            filterPlatform: chip.platform.label,
+                          ),
+                        ),
+                      ),
                     ))
                 .toList(),
           ),
         );
       },
-    );
-  }
-
-  Widget _buildOtherChipWidget(_OtherChip chip) {
-    final accent = chip.isSpecial
-        ? const Color(0xFFD32F2F)
-        : const Color(0xFF1565C0);
-    final hasBadge = chip.badge != null;
-
-    return GestureDetector(
-      onTap: () => showModalBottomSheet(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: Colors.transparent,
-        builder: (_) => _PaymentSheet(filterPlatform: chip.platform.label),
-      ),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border.all(
-              color: hasBadge ? accent : const Color(0xFFE8E8E8),
-              width: hasBadge ? 1.5 : 1.0),
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: const [
-            BoxShadow(
-                color: Color(0x07000000),
-                blurRadius: 4,
-                offset: Offset(0, 1)),
-          ],
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 32, height: 32,
-              decoration: BoxDecoration(
-                  color: chip.platform.color,
-                  borderRadius: BorderRadius.circular(8)),
-              child: Center(
-                child: Text(
-                  chip.platform.iconText.replaceAll('\n', '')[0],
-                  style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w900,
-                      color: Colors.white),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(chip.platform.label,
-                    style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF222222))),
-                if (hasBadge)
-                  Text('回饋 ${chip.badge}',
-                      style: TextStyle(
-                          fontSize: 10,
-                          color: accent,
-                          fontWeight: FontWeight.w700)),
-              ],
-            ),
-          ],
-        ),
-      ),
     );
   }
 
