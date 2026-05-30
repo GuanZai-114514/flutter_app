@@ -1,15 +1,16 @@
-import 'package:barcode/barcode.dart' as bc;
+import 'package:barcode_widget/barcode_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:barcode/barcode.dart' as bc;
+import 'package:flutter_svg/flutter_svg.dart';
 
 /// 載具輸入畫面
 /// 格式規範（財政部手機條碼共通性載具）：
 ///   - 固定 8 碼
 ///   - 第 1 碼：半形斜線 /
 ///   - 其餘 7 碼：大寫英文(A-Z)、數字(0-9)、特殊符號(. - +)
-///   - 強制使用 Code 128B 子集（財政部規範，與官方發票載具 App 一致）
+///   - 使用 Code128 條碼（支援斜線字元，Code39 不支援）
 ///   - 號碼永久儲存於 shared_preferences，APP 重啟後自動載入
 class CarrierInputScreen extends StatefulWidget {
   const CarrierInputScreen({super.key});
@@ -19,9 +20,11 @@ class CarrierInputScreen extends StatefulWidget {
 }
 
 class _CarrierInputScreenState extends State<CarrierInputScreen> {
+  // ── 格式驗證正則 ──────────────────────────────────────────
   static final RegExp _carrierRegex = RegExp(r'^/[A-Z0-9.\-+]{7}$');
   static const String _prefKey = 'carrier_code';
 
+  // ── 狀態 ──────────────────────────────────────────────────
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
 
@@ -42,16 +45,13 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
     super.dispose();
   }
 
-  // ── sanitize：統一在這裡清理，全程只用這個方法 ──────────────
-  String _sanitize(String raw) =>
-      raw.trim().toUpperCase().replaceAll(RegExp(r'\s'), '');
-
   // ── 持久化：讀取 ──────────────────────────────────────────
   Future<void> _loadSaved() async {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getString(_prefKey);
     if (!mounted) return;
-    final clean = saved != null ? _sanitize(saved) : null;
+    // ✅ 讀取時再次 sanitize：trim + toUpperCase，防止舊資料汙染
+    final clean = saved?.trim().toUpperCase();
     setState(() {
       _savedValue = clean;
       if (clean != null) _controller.text = clean;
@@ -61,7 +61,8 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
 
   // ── 持久化：儲存 ──────────────────────────────────────────
   Future<void> _save(String value) async {
-    final clean = _sanitize(value);
+    // ✅ 儲存前再次 sanitize，確保存入的一定是 trim + 大寫，不含任何空白
+    final clean = value.trim().toUpperCase();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_prefKey, clean);
   }
@@ -74,36 +75,56 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
 
   // ── 格式驗證 ──────────────────────────────────────────────
   Future<void> _validate() async {
-    final raw = _sanitize(_controller.text);
-    _controller.text = raw; // 同步顯示清理後的值
+    // ✅ 統一在這裡做 sanitize，後續所有邏輯都用 raw 這個已清理的值
+    final raw = _controller.text.trim().toUpperCase();
+    // 同步更新 controller 顯示，讓使用者看到實際被儲存的值
+    _controller.text = raw;
 
     if (raw.isEmpty) {
-      setState(() { _errorText = '請輸入載具號碼'; _savedValue = null; });
+      setState(() {
+        _errorText = '請輸入載具號碼';
+        _savedValue = null;
+      });
       return;
     }
     if (raw.length != 8) {
-      setState(() { _errorText = '長度不正確，需固定 8 碼（/ + 7碼）'; _savedValue = null; });
+      setState(() {
+        _errorText = '長度不正確，需固定 8 碼（/ + 7碼）';
+        _savedValue = null;
+      });
       return;
     }
     if (!raw.startsWith('/')) {
-      setState(() { _errorText = '第一碼必須為斜線「/」'; _savedValue = null; });
+      setState(() {
+        _errorText = '第一碼必須為斜線「/」';
+        _savedValue = null;
+      });
       return;
     }
     if (!_carrierRegex.hasMatch(raw)) {
-      setState(() { _errorText = '字元不合法，只允許：英文字母、數字、. - +'; _savedValue = null; });
+      setState(() {
+        _errorText = '字元不合法，只允許：英文字母、數字、. - +';
+        _savedValue = null;
+      });
       return;
     }
 
     _focusNode.unfocus();
     await _save(raw);
     if (!mounted) return;
-    setState(() { _errorText = null; _savedValue = raw; });
+    setState(() {
+      _errorText = null;
+      _savedValue = raw;
+    });
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('✅ 載具號碼已儲存'), duration: Duration(seconds: 1)),
+      const SnackBar(
+        content: Text('✅ 載具號碼已儲存'),
+        duration: Duration(seconds: 1),
+      ),
     );
   }
 
-  // ── 刪除 ──────────────────────────────────────────────────
+  // ── 刪除已儲存的載具 ──────────────────────────────────────
   Future<void> _deleteSaved() async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -111,7 +132,10 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
         title: const Text('刪除載具'),
         content: const Text('確定要刪除已儲存的載具號碼嗎？'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('刪除', style: TextStyle(color: Colors.red)),
@@ -123,7 +147,10 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
     await _clear();
     if (!mounted) return;
     _controller.clear();
-    setState(() { _savedValue = null; _errorText = null; });
+    setState(() {
+      _savedValue = null;
+      _errorText = null;
+    });
   }
 
   // ── 條碼區塊 ──────────────────────────────────────────────
@@ -146,29 +173,36 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
               ),
               const SizedBox(height: 16),
 
-              // ✅ Code 39：財政部手機載具條碼規範
-              //   支援字元：A-Z、0-9、- . $ / + % 空格
-              //   載具格式「/ + 7碼英數.-+」全部在 Code 39 合法字元範圍內
+              // ✅ 修正重點：
+              //   1. 用 LayoutBuilder 取得實際可用寬度，避免 double.infinity 渲染異常
+              //   2. padding 保留左右各 16px quiet zone（條碼規範要求靜區）
+              //   3. 高度提高至 120，掃描器更容易辨識
               LayoutBuilder(
                 builder: (context, constraints) {
-                  final data = _sanitize(_savedValue!);
-                  // ✅ Code 39：財政部手機載具規範格式
-                  // 支援字元：A-Z、0-9、- . $ / + % 空格，足以涵蓋載具所有合法字元
-                  final barcode = bc.Barcode.code39();
-                  final svg = barcode.toSvg(
-                    data,
-                    width: constraints.maxWidth - 32, // 左右各 16px quiet zone
+                  // ✅ 三重 sanitize：trim、toUpperCase、再次確認無空白
+                  //    確保傳入 BarcodeWidget 的資料與財政部載具格式完全吻合
+                  final barcodeData = _savedValue!
+                      .trim()
+                      .toUpperCase()
+                      .replaceAll(RegExp(r'\s'), ''); // 移除任何隱藏空白字元
+                  assert(
+                    barcodeData.length == 8 && barcodeData.startsWith('/'),
+                    '❌ 條碼資料異常: "$barcodeData"',
+                  );
+                  return BarcodeWidget(
+                    barcode: Barcode.code128(),
+                    data: barcodeData,
+                    width: constraints.maxWidth,
                     height: 120,
                     drawText: false,
-                  );
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: SvgPicture.string(svg),
+                    // quiet zone（靜區）：條碼左右兩端必須留白，否則掃描器容易失敗
+                    padding: const EdgeInsets.symmetric(horizontal: 32),
                   );
                 },
               ),
 
               const SizedBox(height: 12),
+
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -188,17 +222,25 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
                     onPressed: () {
                       Clipboard.setData(ClipboardData(text: _savedValue!));
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('已複製載具號碼'), duration: Duration(seconds: 1)),
+                        const SnackBar(
+                          content: Text('已複製載具號碼'),
+                          duration: Duration(seconds: 1),
+                        ),
                       );
                     },
                   ),
                   IconButton(
-                    icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red),
+                    icon: const Icon(
+                      Icons.delete_outline,
+                      size: 18,
+                      color: Colors.red,
+                    ),
                     tooltip: '刪除載具',
                     onPressed: _deleteSaved,
                   ),
                 ],
               ),
+
               const SizedBox(height: 4),
               Text(
                 '已永久儲存，重啟 APP 後仍可使用',
@@ -215,11 +257,16 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator.adaptive()));
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator.adaptive()),
+      );
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('電子載具'), centerTitle: true),
+      appBar: AppBar(
+        title: const Text('電子載具'),
+        centerTitle: true,
+      ),
       body: GestureDetector(
         onTap: () => _focusNode.unfocus(),
         child: SingleChildScrollView(
@@ -227,11 +274,14 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // ── 輸入欄位 ──────────────────────────────────
               TextField(
                 controller: _controller,
                 focusNode: _focusNode,
                 inputFormatters: [
-                  FilteringTextInputFormatter.allow(RegExp(r'[/A-Za-z0-9.\-+]')),
+                  FilteringTextInputFormatter.allow(
+                    RegExp(r'[/A-Za-z0-9.\-+]'),
+                  ),
                   LengthLimitingTextInputFormatter(8),
                 ],
                 decoration: InputDecoration(
@@ -246,15 +296,22 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
                           icon: const Icon(Icons.clear),
                           onPressed: () {
                             _controller.clear();
-                            setState(() { _errorText = null; });
+                            setState(() {
+                              _errorText = null;
+                              // 只清輸入框，不刪已儲存的號碼
+                            });
                           },
                         )
                       : null,
                 ),
-                onChanged: (_) => setState(() { _errorText = null; }),
+                onChanged: (_) => setState(() {
+                  _errorText = null;
+                }),
                 onSubmitted: (_) => _validate(),
               ),
               const SizedBox(height: 16),
+
+              // ── 確認按鈕 ──────────────────────────────────
               SizedBox(
                 width: double.infinity,
                 child: FilledButton.icon(
@@ -264,6 +321,8 @@ class _CarrierInputScreenState extends State<CarrierInputScreen> {
                 ),
               ),
               const SizedBox(height: 28),
+
+              // ── 條碼顯示 ──────────────────────────────────
               _buildBarcodeSection(),
             ],
           ),
