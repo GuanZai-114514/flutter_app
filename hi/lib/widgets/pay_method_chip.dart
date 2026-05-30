@@ -47,18 +47,40 @@ class PayMethodChip extends StatelessWidget {
                     ),
                   ],
                 ),
-                child: Center(
-                  child: Text(
-                    platform.label.length <= 2
-                        ? platform.label
-                        : platform.label.substring(0, 2),
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w900,
-                      color: Colors.white,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
+                child: ClipOval(
+                  child: platform.imagePath != null
+                      ? Image.asset(
+                          platform.imagePath!,
+                          width: 52,
+                          height: 52,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Center(
+                            child: Text(
+                              platform.label.length <= 2
+                                  ? platform.label
+                                  : platform.label.substring(0, 2),
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w900,
+                                color: Colors.white,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        )
+                      : Center(
+                          child: Text(
+                            platform.label.length <= 2
+                                ? platform.label
+                                : platform.label.substring(0, 2),
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w900,
+                              color: Colors.white,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
                 ),
               ),
 
