@@ -27,17 +27,26 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 
-	<!-- 行動支付 Deep Link Scheme 白名單 -->
+	<!-- 行動支付 Deep Link Scheme 白名單（必須與 iosScheme :// 前的部分完全一致） -->
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
-		<string>linepay</string>
+		<!-- LINE Pay: line://pay/generateQR -->
+		<string>line</string>
+		<!-- 街口支付: jkos://showQRCode -->
 		<string>jkos</string>
-		<string>fampay</string>
-		<string>twpay</string>
-		<string>easycard</string>
+		<!-- 全支付: com.pxpay.plus://zjdja -->
+		<string>com.pxpay.plus</string>
+		<!-- 台灣Pay: twmpshortcut://?type=payment -->
+		<string>twmpshortcut</string>
+		<!-- 悠遊付: tw.com.easycard.easycardwallet://paymentCode -->
+		<string>tw.com.easycard.easycardwallet</string>
+		<!-- icash Pay: icashpay:// -->
 		<string>icashpay</string>
+		<!-- PX Pay: pxpay:// -->
 		<string>pxpay</string>
+		<!-- Google Pay: googlepay:// -->
 		<string>googlepay</string>
+		<!-- Samsung Pay: samsungpay:// -->
 		<string>samsungpay</string>
 	</array>
 
