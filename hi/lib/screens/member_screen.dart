@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../notifiers.dart';
 import '../models/pay_platform.dart';
+import '../widgets/pay_method_chip.dart';
 import '../features/invoice/presentation/screens/carrier_input_screen.dart';
 import '../features/invoice/presentation/screens/member_barcode_screen.dart';
 import 'payment_setting_screen.dart';
@@ -108,7 +109,9 @@ class _MemberScreenState extends State<MemberScreen> {
               _loadAllData();
             },
           ),
-          
+
+          const SizedBox(height: 12),
+          _buildMemberPayMethods(),
           const SizedBox(height: 12),
 
           // ── 方格 2: 會員 (展開型) ──────────────────────────────
@@ -328,6 +331,75 @@ class _MemberScreenState extends State<MemberScreen> {
   }
 
   // ── 組件：共用修改按鈕方框 ────────────────────────────────────────────
+
+  Widget _buildMemberPayMethods() {
+    return ValueListenableBuilder<List<String>>(
+      valueListenable: payMethodsNotifier,
+      builder: (context, ids, _) {
+        final platforms = ids
+            .map((id) => platformById(id))
+            .where((platform) => platform != null)
+            .cast<PayPlatform>()
+            .toList();
+
+        if (platforms.isEmpty) {
+          return GestureDetector(
+            onTap: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const PaymentSettingScreen(),
+                ),
+              );
+              _loadAllData();
+            },
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: const [
+                  BoxShadow(
+                      color: Colors.black12,
+                      blurRadius: 4,
+                      offset: Offset(0, 2)),
+                ],
+              ),
+              child: const Text(
+                '尚未設定行動支付，點擊此處前往會員設定',
+                style: TextStyle(fontSize: 14, color: Color(0xFF555555)),
+              ),
+            ),
+          );
+        }
+
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: platforms
+                .map((platform) => Padding(
+                      padding: const EdgeInsets.only(right: 10),
+                      child: PayMethodChip(
+                        platform: platform,
+                        showLabel: true,
+                        onTap: () async {
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const PaymentSettingScreen(),
+                            ),
+                          );
+                          _loadAllData();
+                        },
+                      ),
+                    ))
+                .toList(),
+          ),
+        );
+      },
+    );
+  }
 
   Widget _buildModifyBox({
     required VoidCallback onEdit,
