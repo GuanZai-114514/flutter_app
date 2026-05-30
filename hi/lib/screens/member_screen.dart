@@ -1,292 +1,340 @@
-import 'dart:async';
+import 'package:barcode_widget/barcode_widget.dart';
 import 'package:flutter/material.dart';
-import 'package:sqflite/sqflite.dart';
-import 'package:path/path.dart' as p;
+import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../notifiers.dart';
-import '../models/store_info.dart';
-import '../models/pay_platform.dart';
-import '../features/invoice/presentation/screens/carrier_input_screen.dart';
-import '../features/invoice/presentation/screens/member_barcode_screen.dart';
+/// 會員條碼畫面
+///
+/// 預設條碼格式：
+///   - Code 128  → 英數混合，最通用（7-11、全家等）✅ 支援斜線
+///
+/// 持久化：
+///   - 按品牌分開儲存，key = member_barcode_{brand} / member_type_{brand}
+///   - 傳入 brandName 為空時使用通用 key
+///   - APP 重啟後自動載入
+class MemberBarcodeScreen extends StatefulWidget {
+  /// 品牌名稱，用於分開儲存不同店家的會員條碼。
+  final String? brandName;
 
-// ════════════════════════════════════════════════════════════════════════════
-// 資料模型
-// ════════════════════════════════════════════════════════════════════════════
-
-class UserPaySetting {
-  final String id;
-  final String platform;
-  final String level;
-  final List<String> methods;
-  UserPaySetting({required this.id, required this.platform, required this.level, required this.methods});
-}
-
-// 與 SQL 檔案中的表名對應 (必須與 等級.sql / 支付方式.sql 一致)
-const Map<String, String> kPlatformTableMap = {
-  '悠遊付': 'Easy_wallet',
-  '街口支付': 'JKOPay',
-  '全支付': 'PXPay_Plus',
-  '台灣Pay': 'Taiwan_Pay',
-  'LINE Pay': 'Line_Pay',
-};
-
-// ════════════════════════════════════════════════════════════════════════════
-// MemberScreen
-// ════════════════════════════════════════════════════════════════════════════
-
-class MemberScreen extends StatefulWidget {
-  const MemberScreen({super.key});
+  const MemberBarcodeScreen({super.key, this.brandName});
 
   @override
-  State<MemberScreen> createState() => _MemberScreenState();
+  State<MemberBarcodeScreen> createState() => _MemberBarcodeScreenState();
 }
 
-class _MemberScreenState extends State<MemberScreen> {
-  String? _expandedSection; // 'pay', 'member', 'carrier'
-  List<UserPaySetting> _savedPaySettings = [];
-  Map<String, String> _savedMembers = {};
-  String? _savedCarrier;
+// ── State ─────────────────────────────────────────────────────────────────────
+
+class _MemberBarcodeScreenState extends State<MemberBarcodeScreen> {
+  final TextEditingController _controller = TextEditingController();
+
+  String? _savedValue;
+  bool _isScanning = false;
+  bool _isLoading = true;
+  // 預設固定為 Code 128
+  final String _selectedType = 'code128';
+
+  // ── prefs key ──
+  String get _keyCode => 'member_barcode_${widget.brandName ?? "_generic"}';
+  String get _keyType => 'member_type_${widget.brandName ?? "_generic"}';
 
   @override
   void initState() {
     super.initState();
-    _loadAllData();
+    _loadSaved();
   }
-
-  Future<void> _loadAllData() async {
-    final prefs = await SharedPreferences.getInstance();
-    
-    // 1. 行動支付設定
-    final payKeys = prefs.getKeys().where((k) => k.startsWith('pay_v3_'));
-    List<UserPaySetting> tempPay = [];
-    for (var k in payKeys) {
-      final data = prefs.getStringList(k);
-      if (data != null && data.length >= 2) {
-        tempPay.add(UserPaySetting(
-          id: k,
-          platform: data[0],
-          level: data[1],
-          methods: data.sublist(2),
-        ));
-      }
-    }
-
-    // 2. 超商會員設定（使用與 Home 一致的品牌顯示名稱作為 key）
-    // 對應到 kStores 的 name 屬性
-    final brandMap = {
-      '7-ELEVEN': kStores['seven']!.name,
-      '全家': kStores['fm']!.name,
-      '萊爾富': kStores['hilife']!.name,
-      'OK': kStores['ok']!.name,
-    };
-    Map<String, String> tempMem = {};
-    for (var display in brandMap.keys) {
-      final prefBrand = brandMap[display]!;
-      final code = prefs.getString('member_barcode_$prefBrand');
-      if (code != null) tempMem[display] = code;
-    }
-
-    // 3. 載具設定
-    final carrier = prefs.getString('carrier_code');
-
-    if (mounted) {
-      setState(() {
-        _savedPaySettings = tempPay;
-        _savedMembers = tempMem;
-        _savedCarrier = carrier;
-      });
-
-      // 同步更新全局 notifiers
-      memberSetupNotifier.value = {
-        'fm': prefs.getString('member_barcode_${kStores['fm']!.name}') != null,
-        'seven': prefs.getString('member_barcode_${kStores['seven']!.name}') != null,
-        'hilife': prefs.getString('member_barcode_${kStores['hilife']!.name}') != null,
-        'ok': prefs.getString('member_barcode_${kStores['ok']!.name}') != null,
-      };
-      carrierSetupNotifier.value = (carrier != null && carrier.isNotEmpty);
-    }
-  }
-
-  Future<void> _syncPayMethodsFromPrefs() async {
-    final prefs = await SharedPreferences.getInstance();
-    final payKeys = prefs.getKeys().where((k) => k.startsWith('pay_v3_'));
-    final ids = <String>{};
-    for (var k in payKeys) {
-      final data = prefs.getStringList(k);
-      if (data != null && data.isNotEmpty) {
-        final platformName = data[0];
-        final id = discountSoftwareToId(platformName);
-        if (id != null) ids.add(id);
-      }
-    }
-    final list = ids.toList();
-    payMethodsNotifier.value = list;
-    await savePayMethods(list);
-  }
-
-  // ── UI 佈局 ──────────────────────────────────────────────────────────────
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF2F2F7),
-      appBar: AppBar(
-        title: const Text('會員', style: TextStyle(fontWeight: FontWeight.bold)),
-        centerTitle: true,
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // 方格 1: 行動支付
-          _buildMainBox('行動支付', Icons.account_balance_wallet, 'pay'),
-          if (_expandedSection == 'pay') _buildPayContent(),
-          const SizedBox(height: 12),
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
-          // 方格 2: 會員
-          _buildMainBox('會員', Icons.card_membership, 'member'),
-          if (_expandedSection == 'member') _buildMemberContent(),
-          const SizedBox(height: 12),
+  // ── 持久化：讀取 ──────────────────────────────────────────
+  Future<void> _loadSaved() async {
+    final prefs = await SharedPreferences.getInstance();
+    final code = prefs.getString(_keyCode);
+    if (!mounted) return;
+    setState(() {
+      if (code != null) {
+        final clean = code.trim().toUpperCase().replaceAll(RegExp(r'\s'), '');
+        _savedValue = clean;
+        _controller.text = clean;
+      }
+      _isLoading = false;
+    });
+  }
 
-          // 方格 3: 載具
-          _buildMainBox('載具', Icons.receipt_long, 'carrier'),
-          if (_expandedSection == 'carrier') _buildCarrierContent(),
+  // ── 持久化：儲存 ──────────────────────────────────────────
+  Future<void> _save(String value) async {
+    // 儲存前 sanitize：移除前後空白與隱藏字元，統一大寫
+    final clean = value.trim().toUpperCase().replaceAll(RegExp(r'\s'), '');
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyCode, clean);
+    await prefs.setString(_keyType, _selectedType);
+  }
+
+  // ── 持久化：清除 ──────────────────────────────────────────
+  Future<void> _deleteSaved() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('刪除會員條碼'),
+        content: Text(
+          widget.brandName != null
+              ? '確定要刪除「${widget.brandName}」的會員條碼嗎？'
+              : '確定要刪除已儲存的會員條碼嗎？',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('刪除', style: TextStyle(color: Colors.red)),
+          ),
         ],
       ),
     );
+    if (confirm != true) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_keyCode);
+    await prefs.remove(_keyType);
+    if (!mounted) return;
+    _controller.clear();
+    setState(() {
+      _savedValue = null;
+    });
   }
 
-  Widget _buildMainBox(String title, IconData icon, String section) {
-    final bool isOpen = _expandedSection == section;
-    return GestureDetector(
-      onTap: () => setState(() => _expandedSection = isOpen ? null : section),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-        decoration: BoxDecoration(
+  // ── OCR ───────────────────────────────────────────────────────────────────
+
+  Future<void> _pickAndScan(ImageSource source) async {
+    setState(() => _isScanning = true);
+    try {
+      final picked = await ImagePicker().pickImage(
+        source: source,
+        imageQuality: 90,
+      );
+      if (picked == null) return;
+
+      final inputImage = InputImage.fromFilePath(picked.path);
+      final recognizer = TextRecognizer(
+        script: TextRecognitionScript.latin,
+      );
+      try {
+        final result = await recognizer.processImage(inputImage);
+        final extracted = _extractBestMatch(result.text);
+        if (extracted.isNotEmpty) {
+          setState(() {
+            _controller.text = extracted;
+            _savedValue = null;
+          });
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('未偵測到有效字串，請重試或手動輸入'),
+              ),
+            );
+          }
+        }
+      } finally {
+        recognizer.close();
+      }
+    } catch (e) {
+      debugPrint('❌ 掃描失敗: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('掃描失敗：$e')));
+      }
+    } finally {
+      if (mounted) setState(() => _isScanning = false);
+    }
+  }
+
+  /// 從 OCR 結果中抓最長的連續英數段（A-Z a-z 0-9），至少 4 碼
+  String _extractBestMatch(String text) {
+    final matches = RegExp(r'[A-Za-z0-9]{4,}')
+        .allMatches(text)
+        .map((m) => m.group(0)!)
+        .toList();
+    if (matches.isEmpty) return '';
+    matches.sort((a, b) => b.length.compareTo(a.length));
+    return matches.first;
+  }
+
+  // ── 格式驗證 ──────────────────────────────────────────────
+  String? _validate(String value) {
+    if (value.isEmpty) return '請輸入或掃描會員號碼';
+    return null;
+  }
+
+  // ── 來源選單 ──────────────────────────────────────────────────────────────
+  Future<void> _showSourcePicker() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: const BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 2))],
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
-        child: Row(
+        padding: EdgeInsets.fromLTRB(
+          20,
+          16,
+          20,
+          MediaQuery.of(ctx).padding.bottom + 20,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: Colors.blue, size: 28),
-            const SizedBox(width: 16),
-            Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const Spacer(),
-            Icon(isOpen ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down, color: Colors.grey),
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            _SourceTile(
+              icon: Icons.camera_alt,
+              title: '拍照辨識',
+              subtitle: '開啟相機拍攝條碼',
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickAndScan(ImageSource.camera);
+              },
+            ),
+            const SizedBox(height: 4),
+            _SourceTile(
+              icon: Icons.photo_library,
+              title: '從相簿選取',
+              subtitle: '選取已有的條碼圖片',
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickAndScan(ImageSource.gallery);
+              },
+            ),
           ],
         ),
       ),
     );
   }
 
-  // ── 1. 行動支付區塊內容 ────────────────────────────────────────────────────────
-
-  Widget _buildPayContent() {
-    final platforms = ['悠遊付', '街口支付', '全支付', '台灣Pay', 'LINE Pay'];
-    return Column(
-      children: platforms.map((p) => _buildPlatformRow(p)).toList(),
+  // ── 確認 / 儲存 ───────────────────────────────────────────────────────────
+  Future<void> _confirm() async {
+    final value = _controller.text.trim();
+    final error = _validate(value);
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error)),
+      );
+      return;
+    }
+    FocusScope.of(context).unfocus();
+    await _save(value);
+    if (!mounted) return;
+    setState(() => _savedValue = value);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('✅ 會員條碼已儲存'),
+        duration: Duration(seconds: 1),
+      ),
     );
   }
 
-  Widget _buildPlatformRow(String platformName) {
-    final mySettings = _savedPaySettings.where((s) => s.platform == platformName).toList();
-    return Container(
-      margin: const EdgeInsets.only(top: 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Text(platformName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-              const Spacer(),
-              IconButton(
-                icon: const Icon(Icons.add_circle_outline, color: Colors.blue),
-                onPressed: () => _showPayConfigDialog(platformName),
+  // ── 條碼 Widget ───────────────────────────────────────────────────────────
+
+  Widget _buildBarcodeSection() {
+    if (_savedValue == null) return const SizedBox.shrink();
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+        child: Column(
+          children: [
+            if (widget.brandName != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(
+                  widget.brandName!,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 15,
+                  ),
+                ),
               ),
-            ],
-          ),
-          ...mySettings.map((s) => Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Row(
+            Text(
+              '請讓店員掃描以下條碼',
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+            ),
+            const SizedBox(height: 16),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final barcodeData = _savedValue!
+                    .trim()
+                    .toUpperCase()
+                    .replaceAll(RegExp(r'\s'), '');
+                return BarcodeWidget(
+                  barcode: Barcode.code128(),
+                  data: barcodeData,
+                  width: constraints.maxWidth,
+                  height: 120,
+                  drawText: false,
+                  padding: const EdgeInsets.symmetric(horizontal: 32),
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Expanded(child: Text('${s.level == "0" ? "一般" : s.level} | ${s.methods.join(", ")}', style: const TextStyle(fontSize: 13))),
-                _buildModifyBox(
-                  onEdit: () => _showPayConfigDialog(platformName, existing: s),
-                  onDelete: () => _deleteSetting(s.id)
+                Flexible(
+                  child: Text(
+                    _savedValue!,
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 14,
+                      letterSpacing: 1.5,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.copy, size: 18),
+                  tooltip: '複製',
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: _savedValue!));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('已複製'),
+                        duration: Duration(seconds: 1),
+                      ),
+                    );
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(
+                    Icons.delete_outline,
+                    size: 18,
+                    color: Colors.red,
+                  ),
+                  tooltip: '刪除',
+                  onPressed: _deleteSaved,
                 ),
               ],
             ),
-          )),
-        ],
-      ),
-    );
-  }
-
-  // ── 2. 會員區塊內容 ──────────────────────────────────────────────────────────
-
-  Widget _buildMemberContent() {
-    final brandMap = {
-      '7-ELEVEN': kStores['seven']!.name,
-      '全家': kStores['fm']!.name,
-      '萊爾富': kStores['hilife']!.name,
-      'OK': kStores['ok']!.name,
-    };
-    return Column(
-      children: brandMap.keys.map((s) {
-        final prefBrand = brandMap[s]!;
-        return Container(
-          margin: const EdgeInsets.only(top: 8),
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
-          child: ListTile(
-            title: Text(s, style: const TextStyle(fontWeight: FontWeight.w600)),
-            subtitle: Text(_savedMembers[s] ?? '尚未設定'),
-            trailing: _buildModifyBox(
-              onEdit: () async {
-                await Navigator.push(context, MaterialPageRoute(builder: (_) => MemberBarcodeScreen(brandName: prefBrand)));
-                _loadAllData();
-              },
-              onDelete: () async {
-                final prefs = await SharedPreferences.getInstance();
-                await prefs.remove('member_barcode_$prefBrand');
-                await prefs.remove('member_type_$prefBrand');
-                _loadAllData();
-              }
-            ),
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  // ── 3. 載具區塊內容 ──────────────────────────────────────────────────────────
-
-  Widget _buildCarrierContent() {
-    return Container(
-      margin: const EdgeInsets.only(top: 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
-      child: ListTile(
-        leading: const Icon(Icons.receipt, color: Colors.orange),
-        title: Text(_savedCarrier ?? '尚未設定'),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (_savedCarrier == null) IconButton(icon: const Icon(Icons.add_circle, color: Colors.blue), onPressed: () async {
-              await Navigator.push(context, MaterialPageRoute(builder: (_) => const CarrierInputScreen()));
-              _loadAllData();
-            }),
-            if (_savedCarrier != null) _buildModifyBox(
-              onEdit: () async {
-                await Navigator.push(context, MaterialPageRoute(builder: (_) => const CarrierInputScreen()));
-                _loadAllData();
-              },
-              onDelete: () async {
-                final prefs = await SharedPreferences.getInstance();
-                await prefs.remove('carrier_code');
-                _loadAllData();
-              }
+            const SizedBox(height: 4),
+            Text(
+              '已永久儲存，重啟 APP 後仍可使用',
+              style: TextStyle(fontSize: 11, color: Colors.grey.shade400),
             ),
           ],
         ),
@@ -294,113 +342,148 @@ class _MemberScreenState extends State<MemberScreen> {
     );
   }
 
-  // ── 修改按鈕（方框樣式） ────────────────────────────────────────────────────
+  // ── 主畫面 ────────────────────────────────────────────────────────────────
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator.adaptive()),
+      );
+    }
 
-  Widget _buildModifyBox({required VoidCallback onEdit, required VoidCallback onDelete}) {
-    return PopupMenuButton<String>(
-      onSelected: (v) => v == 'edit' ? onEdit() : onDelete(),
-      itemBuilder: (ctx) => [
-        const PopupMenuItem(value: 'edit', child: Text('修改資料')),
-        const PopupMenuItem(value: 'delete', child: Text('刪除', style: TextStyle(color: Colors.red))),
-      ],
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(border: Border.all(color: Colors.blue), borderRadius: BorderRadius.circular(8)),
-        child: const Text('修改', style: TextStyle(color: Colors.blue, fontSize: 12, fontWeight: FontWeight.bold)),
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          widget.brandName != null ? '${widget.brandName} 會員條碼' : '會員條碼',
+        ),
+        centerTitle: true,
+      ),
+      body: GestureDetector(
+        onTap: () => FocusScope.of(context).unfocus(),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── 輸入欄 + 掃描按鈕 ─────────────────────────
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _controller,
+                      keyboardType: TextInputType.visiblePassword,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(
+                          RegExp(r'[A-Za-z0-9\-. /+$%]'),
+                        ),
+                      ],
+                      decoration: InputDecoration(
+                        labelText: '會員號碼',
+                        hintText: '掃描或手動輸入',
+                        border: const OutlineInputBorder(),
+                        prefixIcon: const Icon(Icons.person_outline),
+                        suffixIcon: _controller.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear),
+                                onPressed: () {
+                                  _controller.clear();
+                                  setState(() {});
+                                },
+                              )
+                            : null,
+                      ),
+                      onChanged: (_) => setState(() {}),
+                      onSubmitted: (_) => _confirm(),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  _isScanning
+                      ? const SizedBox(
+                          width: 52,
+                          height: 52,
+                          child: Center(
+                            child: CircularProgressIndicator(strokeWidth: 2.5),
+                          ),
+                        )
+                      : Material(
+                          color: Colors.blue,
+                          borderRadius: BorderRadius.circular(12),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(12),
+                            onTap: _showSourcePicker,
+                            child: const SizedBox(
+                              width: 52,
+                              height: 52,
+                              child: Icon(
+                                Icons.qr_code_scanner,
+                                color: Colors.white,
+                                size: 26,
+                              ),
+                            ),
+                          ),
+                        ),
+                ],
+              ),
+
+              const SizedBox(height: 8),
+              Text(
+                '點右側按鈕可拍照自動辨識條碼，支援 A-Z / a-z / 0-9',
+                style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+              ),
+              const SizedBox(height: 16),
+
+              // ── 儲存按鈕 ──────────────────────────────────
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _isScanning ? null : _confirm,
+                  icon: const Icon(Icons.check),
+                  label: const Text('確認並儲存條碼'),
+                ),
+              ),
+              const SizedBox(height: 28),
+
+              // ── 條碼顯示區 ────────────────────────────────
+              _buildBarcodeSection(),
+            ],
+          ),
+        ),
       ),
     );
   }
+}
 
-  // ── 設定彈窗邏輯（從資料庫讀取等級與支付方式） ───────────────────────────────
+// ── 來源選單 ListTile ─────────────────────────────────────────────────────────
 
-  Future<void> _showPayConfigDialog(String platform, {UserPaySetting? existing}) async {
-    try {
-      final dbPath = p.join(await getDatabasesPath(), 'pay_helper.db');
-      final db = await openDatabase(dbPath);
-      final String tableName = kPlatformTableMap[platform] ?? '';
+class _SourceTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
 
-      if (tableName.isEmpty) throw '找不到對應的資料表: $platform';
+  const _SourceTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
 
-      // 讀取資料
-      final List<Map<String, dynamic>> levelsRaw = await db.query(tableName, columns: ['user_level']).catchError((_) => <Map<String, dynamic>>[]);
-      final List<Map<String, dynamic>> methodsRaw = await db.query(tableName, columns: ['payment_method']).catchError((_) => <Map<String, dynamic>>[]);
-      
-      final List<String> levelOptions = levelsRaw.map((e) => e['user_level']?.toString() ?? '').where((e) => e.isNotEmpty && e != 'null').toSet().toList();
-      final List<String> methodOptions = methodsRaw.map((e) => e['payment_method']?.toString() ?? '').where((e) => e.isNotEmpty && e != 'null').toSet().toList();
-
-      if (methodOptions.isEmpty) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('資料庫中無 $platform 的支付方式')));
-        return;
-      }
-
-      String selectedLevel = existing?.level ?? (levelOptions.isNotEmpty ? levelOptions.first : '0');
-      List<String> selectedMethods = existing != null ? List.from(existing.methods) : [];
-
-      if (!mounted) return;
-
-      await showDialog(
-        context: context,
-        builder: (ctx) => StatefulBuilder(builder: (ctx, setDlgState) => AlertDialog(
-          title: Text('$platform 設定'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (levelOptions.isNotEmpty && levelOptions.first != '0') ...[
-                  const Text('等級 (單選)', style: TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<String>(
-                    isExpanded: true,
-                    value: selectedLevel,
-                    items: levelOptions.map((l) => DropdownMenuItem(value: l, child: Text(l))).toList(),
-                    onChanged: (v) => setDlgState(() => selectedLevel = v!),
-                    decoration: const InputDecoration(border: OutlineInputBorder(), contentPadding: EdgeInsets.symmetric(horizontal: 10)),
-                  ),
-                  const SizedBox(height: 20),
-                ],
-                const Text('支付方式 (可複選)', style: TextStyle(fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                ...methodOptions.map((m) => CheckboxListTile(
-                  title: Text(m, style: const TextStyle(fontSize: 14)),
-                  value: selectedMethods.contains(m),
-                  controlAffinity: ListTileControlAffinity.leading,
-                  contentPadding: EdgeInsets.zero,
-                  onChanged: (v) => setDlgState(() {
-                    v! ? selectedMethods.add(m) : selectedMethods.remove(m);
-                  }),
-                )),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
-            ElevatedButton(onPressed: () async {
-              if (selectedMethods.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('請至少選擇一種支付方式')));
-                return;
-              }
-              final prefs = await SharedPreferences.getInstance();
-              final id = existing?.id ?? 'pay_v3_${DateTime.now().millisecondsSinceEpoch}';
-              await prefs.setStringList(id, [platform, selectedLevel, ...selectedMethods]);
-              // 同步 payMethods 到 notifiers（供 Home 顯示 chips）
-              await _syncPayMethodsFromPrefs();
-              Navigator.pop(ctx);
-              _loadAllData();
-            }, child: const Text('儲存')),
-          ],
-        )),
-      );
-    } catch (e) {
-      debugPrint('❌ 開啟設定失敗: $e');
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('發生錯誤: $e')));
-    }
-  }
-
-  Future<void> _deleteSetting(String id) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(id);
-    await _syncPayMethodsFromPrefs();
-    _loadAllData();
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      leading: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: Colors.blue.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(icon, color: Colors.blue),
+      ),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w500)),
+      subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
+      onTap: onTap,
+    );
   }
 }
