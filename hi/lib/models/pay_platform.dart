@@ -26,6 +26,7 @@ const kPayPlatforms = <PayPlatform>[
     label: 'LINE Pay',
     color: Color(0xFF00B900),
     iconText: 'LINE\nPay',
+    // scheme 前綴必須是 "line"，Info.plist 已宣告 <string>line</string>
     iosScheme: 'line://pay/generateQR',
     androidScheme: 'line://pay/generateQR',
     universalUrl: 'https://line.me/en/pay',
@@ -35,6 +36,7 @@ const kPayPlatforms = <PayPlatform>[
     label: '街口支付',
     color: Color(0xFFE53935),
     iconText: '街口',
+    // scheme 前綴 "jkos"，Info.plist 已宣告 <string>jkos</string>
     iosScheme: 'jkos://showQRCode',
     androidScheme: 'jkos://showQRCode',
     universalUrl: 'https://www.jkopay.com',
@@ -44,6 +46,7 @@ const kPayPlatforms = <PayPlatform>[
     label: '全支付',
     color: Color(0xFF1565C0),
     iconText: '全支付',
+    // scheme 前綴 "com.pxpay.plus"，Info.plist 已宣告 <string>com.pxpay.plus</string>
     iosScheme: 'com.pxpay.plus://zjdja',
     androidScheme: 'com.pxpay.plus://zjdja',
     universalUrl: 'https://www.family.com.tw/marketing/allpay.aspx',
@@ -53,6 +56,7 @@ const kPayPlatforms = <PayPlatform>[
     label: '台灣Pay',
     color: Color(0xFF2E7D32),
     iconText: '台灣\nPay',
+    // scheme 前綴 "twmpshortcut"，Info.plist 已宣告 <string>twmpshortcut</string>
     iosScheme: 'twmpshortcut://?type=payment',
     androidScheme: 'twmpshortcut://?type=payment',
     universalUrl: 'https://www.taiwanpay.net.tw',
@@ -62,6 +66,7 @@ const kPayPlatforms = <PayPlatform>[
     label: '悠遊付',
     color: Color(0xFF00838F),
     iconText: '悠遊付',
+    // scheme 前綴 "tw.com.easycard.easycardwallet"，Info.plist 已宣告
     iosScheme: 'tw.com.easycard.easycardwallet://paymentCode',
     androidScheme: 'tw.com.easycard.easycardwallet://paymentCode',
     universalUrl: 'https://www.easycard.com.tw/easywallet',
@@ -89,6 +94,7 @@ const kPayPlatforms = <PayPlatform>[
     label: 'Apple Pay',
     color: Color(0xFF1C1C1E),
     iconText: ' Pay',
+    // Apple Pay 無法用 scheme 直接開啟，透過 NFC/系統處理，不設 scheme
   ),
   PayPlatform(
     id: 'googlepay',
@@ -104,6 +110,7 @@ const kPayPlatforms = <PayPlatform>[
     label: 'Samsung Pay',
     color: Color(0xFF1428A0),
     iconText: 'S Pay',
+    // Samsung Pay 僅 Android
     androidScheme: 'samsungpay://',
     universalUrl: 'https://www.samsung.com/tw/apps/samsung-pay/',
   ),
@@ -117,6 +124,7 @@ PayPlatform? platformById(String id) {
   }
 }
 
+/// 將資料庫的 paymentSoftware 欄位名稱對應到 kPayPlatforms 的 id
 String? discountSoftwareToId(String software) {
   const map = {
     '悠遊付': 'easycard',
@@ -125,6 +133,12 @@ String? discountSoftwareToId(String software) {
     '台灣Pay': 'taiwanpay',
     'Line Pay': 'linepay',
     'LINE Pay': 'linepay',
+    'icash Pay': 'icashpay',
+    'icashPay': 'icashpay',
+    'PX Pay': 'pxpay',
+    'Apple Pay': 'applepay',
+    'Google Pay': 'googlepay',
+    'Samsung Pay': 'samsungpay',
   };
   return map[software];
 }
