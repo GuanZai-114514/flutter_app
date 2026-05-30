@@ -64,3 +64,8 @@ flutter:
     - lib/assets/members/會員.sql
     - lib/assets/payment/支付方式.sql
     - lib/assets/payment/等級.sql
+    - lib/assets/images/all.png
+    - lib/assets/images/line.png
+    - lib/assets/images/machi.png
+    - lib/assets/images/TW.png
+    - lib/assets/images/easy.png
